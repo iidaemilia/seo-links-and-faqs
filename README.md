@@ -22,6 +22,30 @@ The tool does not modify the website. It produces reports for human review.
 
 FAQ generation and the final HTML report are planned for a later phase.
 
+## OpenAI API setup
+
+FAQ generation will use the OpenAI API in a later phase. Prepare a local
+configuration file by copying the example:
+
+```bash
+cp .env.example .env
+```
+
+Then replace `your_api_key_here` in `.env` with your own API key. The real
+`.env` file is excluded from Git and must never be committed.
+
+To generate FAQ suggestions for exactly one sitemap page:
+
+```bash
+./.venv/bin/python main.py \
+  --url https://iidalehtonen.com \
+  --faq-page https://iidalehtonen.com/writing/should-you-build-your-website-with-ai/
+```
+
+Omitting `--faq-page` guarantees that the command makes no OpenAI API request.
+When FAQs are generated, the JSON, Markdown and HTML reports include the
+question-and-answer pairs, visible FAQ HTML and matching `FAQPage` JSON-LD.
+
 ## Requirements
 
 - Python 3.10 or newer

@@ -1,11 +1,16 @@
 """Command-line entry point for SEO Linker."""
 
 import argparse
+import os
 from pathlib import Path
 from urllib.parse import urlsplit
 
+from dotenv import load_dotenv
+from openai import OpenAIError
+
 from seolinker import __version__
 from seolinker.faq import detect_faq_status, faq_status_label
+from seolinker.faq_generator import GeneratedFaq, generate_faqs
 from seolinker.fetch import fetch_page_html, fetch_sitemap_urls
 from seolinker.linker import suggest_missing_links
 from seolinker.links import (
@@ -33,7 +38,11 @@ EXCLUDED_CONTENT_PATHS = {"/privacy/", "/writing/"}
 
 
 def print_page_results(
-    heading: str, pages: list[Page], min_similarity: float, output_dir: Path
+    heading: str,
+    pages: list[Page],
+    min_similarity: float,
+    output_dir: Path,
+    generated_faq: GeneratedFaq | None = None,
 ) -> None:
     """Print page-level link data and write the analysis reports."""
     incoming_sources = find_incoming_link_sources(pages)
@@ -105,6 +114,7 @@ def print_page_results(
         suggestions=suggestions,
         min_similarity=min_similarity,
         preprocessing=preprocessing,
+        generated_faq=generated_faq,
     )
     print(f"\nJSON report saved: {report_path}")
     markdown_path = write_markdown_report(
@@ -115,6 +125,7 @@ def print_page_results(
         suggestions=suggestions,
         min_similarity=min_similarity,
         preprocessing=preprocessing,
+        generated_faq=generated_faq,
     )
     print(f"Markdown report saved: {markdown_path}")
     html_path = write_html_report(
@@ -124,6 +135,7 @@ def print_page_results(
         suggestions=suggestions,
         min_similarity=min_similarity,
         preprocessing=preprocessing,
+        generated_faq=generated_faq,
     )
     print(f"HTML report saved: {html_path}")
 
@@ -149,6 +161,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="Public website URL to analyze through its sitemap.",
     )
     parser.add_argument(
+        "--faq-page",
+        help=(
+            "Generate FAQs with the OpenAI API for this exact page URL. "
+            "No API call is made when this option is omitted."
+        ),
+    )
+    parser.add_argument(
         "--min-similarity",
         type=float,
         default=0.15,
@@ -165,10 +184,13 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main() -> None:
     """Run the command-line tool."""
+    load_dotenv()
     parser = build_parser()
     args = parser.parse_args()
     if not 0 <= args.min_similarity <= 1:
         parser.error("--min-similarity must be between 0 and 1.")
+    if args.faq_page and not args.url:
+        parser.error("--faq-page can currently be used only together with --url.")
 
     if args.site:
         try:
@@ -226,11 +248,36 @@ def main() -> None:
                 faq_status=detect_faq_status(html),
             )
         )
+    generated_faq = None
+    if args.faq_page:
+        requested_url = normalize_url(args.faq_page)
+        page = next((item for item in pages if item.url == requested_url), None)
+        if page is None:
+            parser.error("--faq-page must match a URL found in the sitemap.")
+        if not page.analyze_content:
+            parser.error("The selected FAQ page is excluded from content analysis.")
+        if not os.getenv("OPENAI_API_KEY"):
+            parser.error("OPENAI_API_KEY is missing. Add it to the local .env file.")
+
+        model = os.getenv("OPENAI_FAQ_MODEL", "gpt-5.6-luna")
+        print(f"\nGenerating FAQs for: {page.url}")
+        print(f"Model: {model}")
+        try:
+            generated_faq = generate_faqs(page, model=model)
+        except (OpenAIError, ValueError) as error:
+            parser.error(f"OpenAI API request failed: {error}")
+
+        print("\nGenerated FAQ suggestions:")
+        for index, item in enumerate(generated_faq.result.items, start=1):
+            print(f"\n{index}. {item.question}")
+            print(item.answer)
+
     print_page_results(
-        f"Found {len(pages)} URLs in the sitemap:",
+        f"\nFound {len(pages)} URLs in the sitemap:",
         pages,
         args.min_similarity,
         args.out_dir,
+        generated_faq=generated_faq,
     )
 
 

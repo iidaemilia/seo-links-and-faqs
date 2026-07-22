@@ -56,6 +56,11 @@
       .details { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 8px 18px; }
       .label { color: var(--muted); font-size: .8rem; text-transform: uppercase; letter-spacing: .04em; }
       .suggested-copy { margin: 14px 0 0; padding: 14px; border-radius: 10px; background: var(--accent-soft); }
+      .faq-item + .faq-item { margin-top: 18px; }
+      .faq-item p { margin-bottom: 0; }
+      .code-block { position: relative; margin-top: 18px; }
+      .code-block pre { margin: 8px 0 0; padding: 20px; overflow-x: auto; border-radius: 12px; background: #101828; color: #f2f4f7; }
+      .copy-button { border: 0; border-radius: 8px; padding: 8px 12px; background: var(--accent); color: white; cursor: pointer; }
       .table-wrap { overflow-x: auto; }
       table { width: 100%; border-collapse: collapse; }
       th, td { padding: 13px 16px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
@@ -124,6 +129,33 @@
         </table>
       </div>
 
+      <h2>Generated FAQ</h2>
+      {% if generated_faq %}
+        <article class="card">
+          <h3><a href="{{ generated_faq.page.url }}">{{ generated_faq.page.heading }}</a></h3>
+          <p class="meta">Generated with {{ generated_faq.model }}. Review every answer before publishing.</p>
+          {% for item in generated_faq.result.items %}
+            <div class="faq-item">
+              <h3>{{ item.question }}</h3>
+              <p>{{ item.answer }}</p>
+            </div>
+          {% endfor %}
+        </article>
+
+        <div class="code-block">
+          <h3>Visible FAQ HTML</h3>
+          <button class="copy-button" type="button" data-copy-target="visible-faq-code">Copy HTML</button>
+          <pre><code id="visible-faq-code">{{ generated_faq.visible_html }}</code></pre>
+        </div>
+        <div class="code-block">
+          <h3>FAQPage JSON-LD</h3>
+          <button class="copy-button" type="button" data-copy-target="faq-schema-code">Copy JSON-LD</button>
+          <pre><code id="faq-schema-code">{{ generated_faq.json_ld_script }}</code></pre>
+        </div>
+      {% else %}
+        <p class="empty">No FAQs were generated in this run. Use <code>--faq-page</code> to generate suggestions for one page.</p>
+      {% endif %}
+
       <h2>All pages</h2>
       <div class="table-wrap">
         <table>
@@ -144,5 +176,16 @@
 
       <footer>Generated {{ generated_at.strftime("%Y-%m-%d %H:%M UTC") }}. Review all suggestions before editing your website.</footer>
     </main>
+    <script>
+      document.querySelectorAll("[data-copy-target]").forEach((button) => {
+        button.addEventListener("click", async () => {
+          const code = document.getElementById(button.dataset.copyTarget);
+          await navigator.clipboard.writeText(code.textContent);
+          const originalText = button.textContent;
+          button.textContent = "Copied";
+          setTimeout(() => { button.textContent = originalText; }, 1500);
+        });
+      });
+    </script>
   </body>
 </html>

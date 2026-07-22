@@ -7,6 +7,7 @@ from pathlib import Path
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from seolinker.faq import faq_status_label
+from seolinker.faq_generator import GeneratedFaq
 from seolinker.linker import LinkSuggestion
 from seolinker.models import Page
 from seolinker.similarity import SimilarityResult
@@ -23,6 +24,7 @@ def write_json_report(
     suggestions: list[LinkSuggestion],
     min_similarity: float,
     preprocessing: str,
+    generated_faq: GeneratedFaq | None = None,
 ) -> Path:
     """Write analysis results as JSON and return the report path."""
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -88,6 +90,20 @@ def write_json_report(
             }
             for suggestion in suggestions
         ],
+        "generated_faq": (
+            {
+                "page_url": generated_faq.page.url,
+                "model": generated_faq.model,
+                "items": [
+                    item.model_dump() for item in generated_faq.result.items
+                ],
+                "visible_html": generated_faq.visible_html,
+                "faq_page_schema": json.loads(generated_faq.schema_json),
+                "json_ld_script": generated_faq.json_ld_script,
+            }
+            if generated_faq
+            else None
+        ),
     }
 
     report_path.write_text(
@@ -105,6 +121,7 @@ def write_markdown_report(
     suggestions: list[LinkSuggestion],
     min_similarity: float,
     preprocessing: str,
+    generated_faq: GeneratedFaq | None = None,
 ) -> Path:
     """Write analysis results as a human-readable Markdown report."""
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -172,7 +189,36 @@ def write_markdown_report(
         if page.analyze_content:
             lines.append(
                 f"- [{page.heading}]({page.url}): {faq_status_label(page.faq_status)}"
-            )
+        )
+
+    lines.extend(["", "## Generated FAQ", ""])
+    if generated_faq is None:
+        lines.append("No FAQs were generated in this run.")
+    else:
+        lines.extend(
+            [
+                f"- Page: {generated_faq.page.url}",
+                f"- Model: `{generated_faq.model}`",
+                "",
+            ]
+        )
+        for item in generated_faq.result.items:
+            lines.extend([f"### {item.question}", "", item.answer, ""])
+        lines.extend(
+            [
+                "### Visible FAQ HTML",
+                "",
+                "```html",
+                generated_faq.visible_html,
+                "```",
+                "",
+                "### FAQPage JSON-LD",
+                "",
+                "```html",
+                generated_faq.json_ld_script,
+                "```",
+            ]
+        )
 
     lines.extend(["", "## Pages", ""])
     for page in pages:
@@ -214,6 +260,7 @@ def write_html_report(
     suggestions: list[LinkSuggestion],
     min_similarity: float,
     preprocessing: str,
+    generated_faq: GeneratedFaq | None = None,
 ) -> Path:
     """Write analysis results as a self-contained HTML report."""
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -240,6 +287,7 @@ def write_html_report(
         faq_status_label=faq_status_label,
         min_similarity=min_similarity,
         preprocessing=preprocessing,
+        generated_faq=generated_faq,
     )
     report_path.write_text(rendered, encoding="utf-8")
     return report_path
