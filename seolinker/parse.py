@@ -5,6 +5,20 @@ from pathlib import Path
 from bs4 import BeautifulSoup
 
 
+def extract_language(html: bytes | str) -> str | None:
+    """Poimi HTML-dokumentin ensisijainen kaksikirjaiminen kielikoodi."""
+    soup = BeautifulSoup(html, "html.parser")
+    html_element = soup.find("html")
+    if html_element is None:
+        return None
+
+    language = html_element.get("lang")
+    if not isinstance(language, str) or not language.strip():
+        return None
+
+    return language.strip().casefold().split("-", maxsplit=1)[0]
+
+
 def extract_title(html: bytes | str) -> str:
     """Poimi HTML-sisällön title-teksti."""
     soup = BeautifulSoup(html, "html.parser")

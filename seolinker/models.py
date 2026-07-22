@@ -14,6 +14,7 @@ class Page:
     title: str
     text: str
     internal_links: tuple[str, ...]
+    language: str | None = None
     analyze_content: bool = True
     faq_status: FaqStatus = FaqStatus.NONE
 

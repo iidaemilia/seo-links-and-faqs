@@ -7,19 +7,28 @@ from urllib.parse import urlsplit
 from seolinker import __version__
 from seolinker.faq import detect_faq_status
 from seolinker.fetch import fetch_page_html, fetch_sitemap_urls
+from seolinker.linker import suggest_missing_links
 from seolinker.links import (
     extract_internal_links,
     find_incoming_link_sources,
     normalize_url,
 )
 from seolinker.models import Page
-from seolinker.parse import extract_main_text, extract_title, find_html_files
+from seolinker.parse import (
+    extract_language,
+    extract_main_text,
+    extract_title,
+    find_html_files,
+)
+from seolinker.similarity import calculate_tfidf_similarities, select_stop_words
 
 
 EXCLUDED_CONTENT_PATHS = {"/privacy/", "/writing/"}
 
 
-def print_page_results(heading: str, pages: list[Page]) -> None:
+def print_page_results(
+    heading: str, pages: list[Page], min_similarity: float
+) -> None:
     """Tulosta sivukohtaiset linkkiverkon yhteenvetotiedot."""
     incoming_sources = find_incoming_link_sources(pages)
     print(heading)
@@ -44,6 +53,36 @@ def print_page_results(heading: str, pages: list[Page]) -> None:
             f"FAQ: {faq_status})"
         )
 
+    similarities = calculate_tfidf_similarities(pages)
+    stop_words = select_stop_words(pages)
+    preprocessing = (
+        "englannin stop-sanat poistettu"
+        if stop_words == "english"
+        else "ei stop-sanalistaa"
+    )
+    print(f"\nTF-IDF-samankaltaisuudet ({preprocessing}):")
+    if not similarities:
+        print("- Vertailuun tarvitaan vähintään kaksi sisältösivua.")
+        return
+
+    for result in similarities:
+        print(
+            f"- {result.source.location} ↔ {result.target.location}: "
+            f"{result.score:.3f}"
+        )
+
+    suggestions = suggest_missing_links(similarities, min_similarity=min_similarity)
+    print(f"\nAlustavat puuttuvat linkkisuunnat (raja {min_similarity:.3f}):")
+    if not suggestions:
+        print("- Ei uusia linkkisuuntia nykyisellä rajalla.")
+        return
+
+    for suggestion in suggestions:
+        print(
+            f"- {suggestion.source.location} → {suggestion.target.location} "
+            f"({suggestion.similarity:.3f})"
+        )
+
 
 def build_parser() -> argparse.ArgumentParser:
     """Luo komentorivin argumenttien käsittelijä."""
@@ -65,6 +104,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--url",
         help="Analysoitavan sivuston julkinen verkko-osoite.",
     )
+    parser.add_argument(
+        "--min-similarity",
+        type=float,
+        default=0.15,
+        help="Linkkiehdotuksen pienin sallittu samankaltaisuus (oletus: 0.15).",
+    )
     return parser
 
 
@@ -72,6 +117,8 @@ def main() -> None:
     """Käynnistä komentorivityökalu."""
     parser = build_parser()
     args = parser.parse_args()
+    if not 0 <= args.min_similarity <= 1:
+        parser.error("--min-similarity-arvon pitää olla välillä 0–1.")
 
     if args.site:
         try:
@@ -91,10 +138,15 @@ def main() -> None:
                     title=extract_title(html),
                     text=extract_main_text(html),
                     internal_links=tuple(extract_internal_links(html, page_url)),
+                    language=extract_language(html),
                     faq_status=detect_faq_status(html),
                 )
             )
-        print_page_results(f"Löytyi {len(pages)} HTML-tiedostoa:", pages)
+        print_page_results(
+            f"Löytyi {len(pages)} HTML-tiedostoa:",
+            pages,
+            args.min_similarity,
+        )
         return
 
     try:
@@ -116,11 +168,16 @@ def main() -> None:
                 title=extract_title(html),
                 text=extract_main_text(html),
                 internal_links=tuple(extract_internal_links(html, url)),
+                language=extract_language(html),
                 analyze_content=path not in EXCLUDED_CONTENT_PATHS,
                 faq_status=detect_faq_status(html),
             )
         )
-    print_page_results(f"Sitemapista löytyi {len(pages)} URLia:", pages)
+    print_page_results(
+        f"Sitemapista löytyi {len(pages)} URLia:",
+        pages,
+        args.min_similarity,
+    )
 
 
 if __name__ == "__main__":
