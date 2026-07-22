@@ -72,8 +72,9 @@
   <body>
     <main>
       <h1>SEO Linker report</h1>
-      <p class="intro">Internal linking opportunities and FAQ coverage for human review.</p>
+      <p class="intro">{% if faq_only %}FAQ suggestions and publication-ready code for one page.{% else %}Internal linking opportunities and FAQ coverage for human review.{% endif %}</p>
 
+      {% if not faq_only %}
       <section class="summary" aria-label="Analysis summary">
         <div class="metric"><strong>{{ pages | length }}</strong><span>Pages found</span></div>
         <div class="metric"><strong>{{ content_pages | length }}</strong><span>Content pages analyzed</span></div>
@@ -128,6 +129,7 @@
           </tbody>
         </table>
       </div>
+      {% endif %}
 
       <h2>Generated FAQ</h2>
       {% if generated_faq %}
@@ -156,6 +158,7 @@
         <p class="empty">No FAQs were generated in this run. Use <code>--faq-page</code> to generate suggestions for one page.</p>
       {% endif %}
 
+      {% if not faq_only %}
       <h2>All pages</h2>
       <div class="table-wrap">
         <table>
@@ -173,6 +176,7 @@
           </tbody>
         </table>
       </div>
+      {% endif %}
 
       <footer>Generated {{ generated_at.strftime("%Y-%m-%d %H:%M UTC") }}. Review all suggestions before editing your website.</footer>
     </main>

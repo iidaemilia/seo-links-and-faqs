@@ -25,6 +25,7 @@ def write_json_report(
     min_similarity: float,
     preprocessing: str,
     generated_faq: GeneratedFaq | None = None,
+    faq_only: bool = False,
 ) -> Path:
     """Write analysis results as JSON and return the report path."""
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -33,7 +34,7 @@ def write_json_report(
     page_results = []
     for page in pages:
         incoming_links = sorted(incoming_sources[page.url])
-        is_orphan = page.analyze_content and not incoming_links
+        is_orphan = None if faq_only else page.analyze_content and not incoming_links
         page_results.append(
             {
                 "location": page.location,
@@ -53,18 +54,35 @@ def write_json_report(
             }
         )
 
-    report = {
-        "generated_at": datetime.now(timezone.utc).isoformat(),
-        "settings": {
+    settings = (
+        {"faq_model": generated_faq.model if generated_faq else None}
+        if faq_only
+        else {
             "min_similarity": min_similarity,
             "tfidf_preprocessing": preprocessing,
-        },
-        "summary": {
+        }
+    )
+    summary = (
+        {
+            "pages_fetched": len(pages),
+            "faq_suggestions": (
+                len(generated_faq.result.items) if generated_faq else 0
+            ),
+        }
+        if faq_only
+        else {
             "pages_found": len(pages),
             "content_pages": sum(page.analyze_content for page in pages),
-            "orphan_pages": sum(page["is_orphan"] for page in page_results),
+            "orphan_pages": sum(bool(page["is_orphan"]) for page in page_results),
             "link_suggestions": len(suggestions),
-        },
+        }
+    )
+
+    report = {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "mode": "faq_only" if faq_only else "site_audit",
+        "settings": settings,
+        "summary": summary,
         "pages": page_results,
         "similarities": [
             {
@@ -122,6 +140,7 @@ def write_markdown_report(
     min_similarity: float,
     preprocessing: str,
     generated_faq: GeneratedFaq | None = None,
+    faq_only: bool = False,
 ) -> Path:
     """Write analysis results as a human-readable Markdown report."""
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -131,6 +150,22 @@ def write_markdown_report(
         for page in pages
         if page.analyze_content and not incoming_sources[page.url]
     ]
+
+    if faq_only:
+        lines = [
+            "# SEO Linker FAQ report",
+            "",
+            "## Summary",
+            "",
+            "- Mode: FAQ only",
+            f"- Page fetched: {generated_faq.page.url if generated_faq else 'none'}",
+            "",
+            "## Generated FAQ",
+            "",
+        ]
+        _append_generated_faq_markdown(lines, generated_faq)
+        report_path.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
+        return report_path
 
     lines = [
         "# SEO Linker report",
@@ -192,33 +227,7 @@ def write_markdown_report(
         )
 
     lines.extend(["", "## Generated FAQ", ""])
-    if generated_faq is None:
-        lines.append("No FAQs were generated in this run.")
-    else:
-        lines.extend(
-            [
-                f"- Page: {generated_faq.page.url}",
-                f"- Model: `{generated_faq.model}`",
-                "",
-            ]
-        )
-        for item in generated_faq.result.items:
-            lines.extend([f"### {item.question}", "", item.answer, ""])
-        lines.extend(
-            [
-                "### Visible FAQ HTML",
-                "",
-                "```html",
-                generated_faq.visible_html,
-                "```",
-                "",
-                "### FAQPage JSON-LD",
-                "",
-                "```html",
-                generated_faq.json_ld_script,
-                "```",
-            ]
-        )
+    _append_generated_faq_markdown(lines, generated_faq)
 
     lines.extend(["", "## Pages", ""])
     for page in pages:
@@ -253,6 +262,40 @@ def write_markdown_report(
     return report_path
 
 
+def _append_generated_faq_markdown(
+    lines: list[str], generated_faq: GeneratedFaq | None
+) -> None:
+    """Append generated FAQ content and publication-ready code blocks."""
+    if generated_faq is None:
+        lines.append("No FAQs were generated in this run.")
+        return
+
+    lines.extend(
+        [
+            f"- Page: {generated_faq.page.url}",
+            f"- Model: `{generated_faq.model}`",
+            "",
+        ]
+    )
+    for item in generated_faq.result.items:
+        lines.extend([f"### {item.question}", "", item.answer, ""])
+    lines.extend(
+        [
+            "### Visible FAQ HTML",
+            "",
+            "```html",
+            generated_faq.visible_html,
+            "```",
+            "",
+            "### FAQPage JSON-LD",
+            "",
+            "```html",
+            generated_faq.json_ld_script,
+            "```",
+        ]
+    )
+
+
 def write_html_report(
     output_dir: Path,
     pages: list[Page],
@@ -261,11 +304,12 @@ def write_html_report(
     min_similarity: float,
     preprocessing: str,
     generated_faq: GeneratedFaq | None = None,
+    faq_only: bool = False,
 ) -> Path:
     """Write analysis results as a self-contained HTML report."""
     output_dir.mkdir(parents=True, exist_ok=True)
     report_path = output_dir / "report.html"
-    orphan_pages = [
+    orphan_pages = [] if faq_only else [
         page
         for page in pages
         if page.analyze_content and not incoming_sources[page.url]
@@ -288,6 +332,28 @@ def write_html_report(
         min_similarity=min_similarity,
         preprocessing=preprocessing,
         generated_faq=generated_faq,
+        faq_only=faq_only,
     )
     report_path.write_text(rendered, encoding="utf-8")
     return report_path
+
+
+def write_faq_only_reports(
+    output_dir: Path, generated_faq: GeneratedFaq
+) -> tuple[Path, Path, Path]:
+    """Write JSON, Markdown and HTML reports for a single-page FAQ run."""
+    page = generated_faq.page
+    common = {
+        "output_dir": output_dir,
+        "pages": [page],
+        "incoming_sources": {page.url: set()},
+        "suggestions": [],
+        "min_similarity": 0.0,
+        "preprocessing": "not_run",
+        "generated_faq": generated_faq,
+        "faq_only": True,
+    }
+    json_path = write_json_report(similarities=[], **common)
+    markdown_path = write_markdown_report(similarities=[], **common)
+    html_path = write_html_report(**common)
+    return json_path, markdown_path, html_path

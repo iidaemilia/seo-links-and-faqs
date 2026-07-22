@@ -27,6 +27,7 @@ from seolinker.parse import (
     find_html_files,
 )
 from seolinker.report import (
+    write_faq_only_reports,
     write_html_report,
     write_json_report,
     write_markdown_report,
@@ -160,6 +161,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--url",
         help="Public website URL to analyze through its sitemap.",
     )
+    source.add_argument(
+        "--faq-only",
+        help=(
+            "Fetch only this page URL, generate FAQs and skip the full site audit."
+        ),
+    )
     parser.add_argument(
         "--faq-page",
         help=(
@@ -191,6 +198,45 @@ def main() -> None:
         parser.error("--min-similarity must be between 0 and 1.")
     if args.faq_page and not args.url:
         parser.error("--faq-page can currently be used only together with --url.")
+
+    if args.faq_only:
+        if not os.getenv("OPENAI_API_KEY"):
+            parser.error("OPENAI_API_KEY is missing. Add it to the local .env file.")
+        try:
+            html = fetch_page_html(args.faq_only)
+        except ValueError as error:
+            parser.error(str(error))
+
+        page_url = normalize_url(args.faq_only)
+        page = Page(
+            location=page_url,
+            url=page_url,
+            title=extract_title(html),
+            heading=extract_h1(html),
+            text=extract_main_text(html),
+            internal_links=tuple(extract_internal_links(html, page_url)),
+            language=extract_language(html),
+            faq_status=detect_faq_status(html),
+        )
+        model = os.getenv("OPENAI_FAQ_MODEL", "gpt-5.6-luna")
+        print(f"Generating FAQs for one page: {page.url}")
+        print(f"Model: {model}")
+        try:
+            generated_faq = generate_faqs(page, model=model)
+        except (OpenAIError, ValueError) as error:
+            parser.error(f"OpenAI API request failed: {error}")
+
+        for index, item in enumerate(generated_faq.result.items, start=1):
+            print(f"\n{index}. {item.question}")
+            print(item.answer)
+
+        json_path, markdown_path, html_path = write_faq_only_reports(
+            args.out_dir, generated_faq
+        )
+        print(f"\nJSON report saved: {json_path}")
+        print(f"Markdown report saved: {markdown_path}")
+        print(f"HTML report saved: {html_path}")
+        return
 
     if args.site:
         try:
