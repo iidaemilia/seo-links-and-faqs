@@ -18,7 +18,7 @@ The tool does not modify the website. It produces reports for human review.
 - Suggest missing internal link directions
 - Suggest a contextual anchor when a reliable phrase exists
 - Fall back to a language-aware related-reading link
-- Export JSON and Markdown reports
+- Export JSON, Markdown and self-contained HTML reports
 
 FAQ generation and the final HTML report are planned for a later phase.
 
@@ -71,6 +71,7 @@ Each run creates:
 
 - `output/report.json` for machine-readable data
 - `output/report.md` for easy human review
+- `output/report.html` for visual review in a browser
 
 Generated reports are excluded from Git because they are run-specific output.
 

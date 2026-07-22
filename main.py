@@ -21,7 +21,11 @@ from seolinker.parse import (
     extract_title,
     find_html_files,
 )
-from seolinker.report import write_json_report, write_markdown_report
+from seolinker.report import (
+    write_html_report,
+    write_json_report,
+    write_markdown_report,
+)
 from seolinker.similarity import calculate_tfidf_similarities, select_stop_words
 
 
@@ -113,6 +117,15 @@ def print_page_results(
         preprocessing=preprocessing,
     )
     print(f"Markdown report saved: {markdown_path}")
+    html_path = write_html_report(
+        output_dir=output_dir,
+        pages=pages,
+        incoming_sources=incoming_sources,
+        suggestions=suggestions,
+        min_similarity=min_similarity,
+        preprocessing=preprocessing,
+    )
+    print(f"HTML report saved: {html_path}")
 
 
 def build_parser() -> argparse.ArgumentParser:

@@ -4,10 +4,15 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
+from jinja2 import Environment, FileSystemLoader, select_autoescape
+
 from seolinker.faq import faq_status_label
 from seolinker.linker import LinkSuggestion
 from seolinker.models import Page
 from seolinker.similarity import SimilarityResult
+
+
+TEMPLATE_DIR = Path(__file__).resolve().parent.parent / "templates"
 
 
 def write_json_report(
@@ -199,4 +204,42 @@ def write_markdown_report(
             )
 
     report_path.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
+    return report_path
+
+
+def write_html_report(
+    output_dir: Path,
+    pages: list[Page],
+    incoming_sources: dict[str, set[str]],
+    suggestions: list[LinkSuggestion],
+    min_similarity: float,
+    preprocessing: str,
+) -> Path:
+    """Write analysis results as a self-contained HTML report."""
+    output_dir.mkdir(parents=True, exist_ok=True)
+    report_path = output_dir / "report.html"
+    orphan_pages = [
+        page
+        for page in pages
+        if page.analyze_content and not incoming_sources[page.url]
+    ]
+    content_pages = [page for page in pages if page.analyze_content]
+
+    environment = Environment(
+        loader=FileSystemLoader(TEMPLATE_DIR),
+        autoescape=select_autoescape(["html", "xml"]),
+    )
+    template = environment.get_template("report.html.j2")
+    rendered = template.render(
+        generated_at=datetime.now(timezone.utc),
+        pages=pages,
+        content_pages=content_pages,
+        orphan_pages=orphan_pages,
+        suggestions=suggestions,
+        incoming_sources=incoming_sources,
+        faq_status_label=faq_status_label,
+        min_similarity=min_similarity,
+        preprocessing=preprocessing,
+    )
+    report_path.write_text(rendered, encoding="utf-8")
     return report_path
