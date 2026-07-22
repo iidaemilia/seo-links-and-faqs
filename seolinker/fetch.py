@@ -1,4 +1,4 @@
-"""Verkkosivuston URLien hakemiseen liittyvät toiminnot."""
+"""Fetch website URLs and HTML over HTTP."""
 
 from urllib.error import HTTPError, URLError
 from urllib.parse import urljoin, urlparse
@@ -7,7 +7,7 @@ from xml.etree import ElementTree
 
 
 def fetch_page_html(url: str) -> bytes:
-    """Lataa verkkosivu ja palauta sen HTML-sisältö."""
+    """Download a web page and return its HTML content."""
     request = Request(url, headers={"User-Agent": "SEO-Linker/0.1"})
 
     try:
@@ -15,19 +15,19 @@ def fetch_page_html(url: str) -> bytes:
             html = response.read()
     except HTTPError as error:
         raise ValueError(
-            f"Sivun haku epäonnistui: HTTP {error.code} ({url})"
+            f"Page request failed: HTTP {error.code} ({url})"
         ) from error
     except URLError as error:
-        raise ValueError(f"Sivun haku epäonnistui ({url}): {error.reason}") from error
+        raise ValueError(f"Page request failed ({url}): {error.reason}") from error
 
     return html
 
 
 def fetch_sitemap_urls(base_url: str) -> list[str]:
-    """Hae sivuston sitemap.xml ja palauta sen saman domainin URLit."""
+    """Fetch sitemap.xml and return URLs from the same domain."""
     parsed_base_url = urlparse(base_url)
     if parsed_base_url.scheme not in {"http", "https"} or not parsed_base_url.netloc:
-        raise ValueError(f"Virheellinen sivuston URL: {base_url}")
+        raise ValueError(f"Invalid website URL: {base_url}")
 
     sitemap_url = urljoin(base_url, "/sitemap.xml")
     request = Request(sitemap_url, headers={"User-Agent": "SEO-Linker/0.1"})
@@ -37,15 +37,15 @@ def fetch_sitemap_urls(base_url: str) -> list[str]:
             sitemap_xml = response.read()
     except HTTPError as error:
         raise ValueError(
-            f"Sitemapin haku epäonnistui: HTTP {error.code} ({sitemap_url})"
+            f"Sitemap request failed: HTTP {error.code} ({sitemap_url})"
         ) from error
     except URLError as error:
-        raise ValueError(f"Sitemapin haku epäonnistui: {error.reason}") from error
+        raise ValueError(f"Sitemap request failed: {error.reason}") from error
 
     try:
         root = ElementTree.fromstring(sitemap_xml)
     except ElementTree.ParseError as error:
-        raise ValueError(f"Sitemap ei ole kelvollista XML:ää: {sitemap_url}") from error
+        raise ValueError(f"Sitemap is not valid XML: {sitemap_url}") from error
 
     urls = []
     for location in root.findall("{*}url/{*}loc"):

@@ -1,4 +1,4 @@
-"""Sisäisten linkkien poimintaan ja normalisointiin liittyvät toiminnot."""
+"""Extract and normalize internal links."""
 
 from urllib.parse import urldefrag, urljoin, urlsplit, urlunsplit
 
@@ -8,7 +8,7 @@ from seolinker.models import Page
 
 
 def normalize_url(url: str) -> str:
-    """Poista URLista fragmentti ja kyselyparametrit vertailua varten."""
+    """Remove URL fragments and query parameters for comparison."""
     url_without_fragment, _ = urldefrag(url)
     parsed = urlsplit(url_without_fragment)
     return urlunsplit(
@@ -23,7 +23,7 @@ def normalize_url(url: str) -> str:
 
 
 def extract_internal_links(html: bytes | str, page_url: str) -> list[str]:
-    """Palauta sivun uniikit saman domainin sisäiset linkkikohteet."""
+    """Return unique same-domain internal link targets from a page."""
     soup = BeautifulSoup(html, "html.parser")
     normalized_page_url = normalize_url(page_url)
     page_domain = urlsplit(normalized_page_url).netloc
@@ -49,7 +49,7 @@ def extract_internal_links(html: bytes | str, page_url: str) -> list[str]:
 
 
 def find_incoming_link_sources(pages: list[Page]) -> dict[str, set[str]]:
-    """Palauta kutakin tunnettua sivua linkittävien sivujen URLit."""
+    """Return source URLs linking to each known page."""
     incoming_sources = {page.url: set() for page in pages}
 
     for page in pages:

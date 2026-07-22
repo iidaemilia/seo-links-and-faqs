@@ -1,4 +1,4 @@
-"""SEO Linkerin yhteiset tietorakenteet."""
+"""Shared data structures for SEO Linker."""
 
 from dataclasses import dataclass
 
@@ -7,11 +7,12 @@ from seolinker.faq import FaqStatus
 
 @dataclass
 class Page:
-    """Yhdeltä HTML-sivulta analyysia varten kerätyt tiedot."""
+    """Data collected from one HTML page for analysis."""
 
     location: str
     url: str
     title: str
+    heading: str
     text: str
     internal_links: tuple[str, ...]
     language: str | None = None
@@ -20,5 +21,5 @@ class Page:
 
     @property
     def word_count(self) -> int:
-        """Palauta päätekstin sanamäärä."""
+        """Return the word count of the extracted main content."""
         return len(self.text.split())

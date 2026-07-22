@@ -1,4 +1,4 @@
-"""HTML-tiedostojen löytämiseen liittyvät toiminnot."""
+"""Discover HTML files and extract page content."""
 
 from pathlib import Path
 
@@ -6,7 +6,7 @@ from bs4 import BeautifulSoup
 
 
 def extract_language(html: bytes | str) -> str | None:
-    """Poimi HTML-dokumentin ensisijainen kaksikirjaiminen kielikoodi."""
+    """Extract the HTML document's primary two-letter language code."""
     soup = BeautifulSoup(html, "html.parser")
     html_element = soup.find("html")
     if html_element is None:
@@ -20,15 +20,24 @@ def extract_language(html: bytes | str) -> str | None:
 
 
 def extract_title(html: bytes | str) -> str:
-    """Poimi HTML-sisällön title-teksti."""
+    """Extract the title text from HTML content."""
     soup = BeautifulSoup(html, "html.parser")
     if soup.title and soup.title.string:
         return soup.title.string.strip()
-    return "(title puuttuu)"
+    return "(title missing)"
+
+
+def extract_h1(html: bytes | str) -> str:
+    """Extract the page's first visible H1 heading."""
+    soup = BeautifulSoup(html, "html.parser")
+    heading = soup.find("h1")
+    if heading is None:
+        return "(H1 missing)"
+    return " ".join(heading.stripped_strings)
 
 
 def extract_main_text(html: bytes | str) -> str:
-    """Poimi HTML-sisällöstä analysoitava näkyvä pääteksti."""
+    """Extract the visible main text used for content analysis."""
     soup = BeautifulSoup(html, "html.parser")
 
     for unwanted in soup.find_all(["script", "style", "noscript", "nav", "footer"]):
@@ -42,10 +51,10 @@ def extract_main_text(html: bytes | str) -> str:
 
 
 def find_html_files(site_dir: Path) -> list[Path]:
-    """Palauta sivustokansion HTML-tiedostot aakkosjärjestyksessä."""
+    """Return HTML files from a site directory in alphabetical order."""
     if not site_dir.exists():
-        raise FileNotFoundError(f"Sivustokansiota ei löydy: {site_dir}")
+        raise FileNotFoundError(f"Site directory not found: {site_dir}")
     if not site_dir.is_dir():
-        raise NotADirectoryError(f"Annettu polku ei ole kansio: {site_dir}")
+        raise NotADirectoryError(f"The provided path is not a directory: {site_dir}")
 
     return sorted(site_dir.rglob("*.html"))

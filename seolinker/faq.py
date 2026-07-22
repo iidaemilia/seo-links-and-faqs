@@ -1,4 +1,4 @@
-"""Näkyvän FAQ-sisällön ja FAQPage-scheman tunnistus."""
+"""Detect visible FAQ content and FAQPage structured data."""
 
 import json
 from enum import Enum
@@ -8,16 +8,29 @@ from bs4 import BeautifulSoup
 
 
 class FaqStatus(str, Enum):
-    """Sivulta tunnistettu FAQ-sisällön ja scheman yhdistelmä."""
+    """Possible combinations of visible FAQ content and FAQPage schema."""
 
-    NONE = "ei näkyvää FAQ:ta eikä schemaa"
-    VISIBLE_ONLY = "näkyvä FAQ, schema puuttuu"
-    SCHEMA_ONLY = "FAQPage-schema, näkyvä FAQ puuttuu"
-    BOTH = "näkyvä FAQ ja FAQPage-schema"
+    NONE = "none"
+    VISIBLE_ONLY = "visible_only"
+    SCHEMA_ONLY = "schema_only"
+    BOTH = "both"
+
+
+FAQ_STATUS_LABELS = {
+    FaqStatus.NONE: "No visible FAQ or FAQPage schema",
+    FaqStatus.VISIBLE_ONLY: "Visible FAQ found; FAQPage schema is missing",
+    FaqStatus.SCHEMA_ONLY: "FAQPage schema found; visible FAQ is missing",
+    FaqStatus.BOTH: "Visible FAQ and FAQPage schema found",
+}
+
+
+def faq_status_label(status: FaqStatus) -> str:
+    """Return a human-readable English label for an FAQ status."""
+    return FAQ_STATUS_LABELS[status]
 
 
 def _has_visible_faq(soup: BeautifulSoup) -> bool:
-    """Tunnista selvästi FAQ:ksi merkitty näkyvä sisältö."""
+    """Detect content that is explicitly presented as a visible FAQ."""
     for heading in soup.find_all(["h1", "h2", "h3", "h4", "h5", "h6"]):
         heading_text = " ".join(heading.stripped_strings).casefold()
         if (
@@ -36,7 +49,7 @@ def _has_visible_faq(soup: BeautifulSoup) -> bool:
 
 
 def _contains_faq_page_type(value: Any) -> bool:
-    """Etsi FAQPage-tyyppi sisäkkäisestä JSON-LD-rakenteesta."""
+    """Find an FAQPage type inside a nested JSON-LD structure."""
     if isinstance(value, dict):
         schema_type = value.get("@type")
         if schema_type == "FAQPage":
@@ -52,7 +65,7 @@ def _contains_faq_page_type(value: Any) -> bool:
 
 
 def _has_faq_schema(soup: BeautifulSoup) -> bool:
-    """Tunnista kelvollisesta JSON-LD:stä FAQPage-tyyppi."""
+    """Detect an FAQPage type in valid JSON-LD blocks."""
     for script in soup.find_all("script", attrs={"type": "application/ld+json"}):
         try:
             structured_data = json.loads(script.get_text())
@@ -66,7 +79,7 @@ def _has_faq_schema(soup: BeautifulSoup) -> bool:
 
 
 def detect_faq_status(html: bytes | str) -> FaqStatus:
-    """Palauta sivun näkyvän FAQ-sisällön ja FAQPage-scheman tila."""
+    """Return the page's visible FAQ and FAQPage schema status."""
     soup = BeautifulSoup(html, "html.parser")
     has_visible_faq = _has_visible_faq(soup)
     has_faq_schema = _has_faq_schema(soup)

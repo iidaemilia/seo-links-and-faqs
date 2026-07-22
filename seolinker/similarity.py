@@ -1,4 +1,4 @@
-"""Sivujen TF-IDF-samankaltaisuuden laskenta."""
+"""Calculate TF-IDF similarity between pages."""
 
 from dataclasses import dataclass
 
@@ -10,7 +10,7 @@ from seolinker.models import Page
 
 @dataclass
 class SimilarityResult:
-    """Yhden sivuparin laskettu samankaltaisuus."""
+    """Calculated similarity for one page pair."""
 
     source: Page
     target: Page
@@ -18,7 +18,7 @@ class SimilarityResult:
 
 
 def select_stop_words(pages: list[Page]) -> str | None:
-    """Valitse turvallinen scikit-learnin stop-sanalista sivujen kielistä."""
+    """Select a safe scikit-learn stop-word list from page languages."""
     content_languages = {
         page.language
         for page in pages
@@ -30,7 +30,7 @@ def select_stop_words(pages: list[Page]) -> str | None:
 
 
 def calculate_tfidf_similarities(pages: list[Page]) -> list[SimilarityResult]:
-    """Laske sisältösivujen kaikki TF-IDF-samankaltaisuudet."""
+    """Calculate all TF-IDF similarities between eligible content pages."""
     content_pages = [
         page for page in pages if page.analyze_content and page.text.strip()
     ]
