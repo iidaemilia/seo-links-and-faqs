@@ -26,6 +26,8 @@ def write_json_report(
     preprocessing: str,
     generated_faq: GeneratedFaq | None = None,
     faq_only: bool = False,
+    similarity_method: str = "tfidf",
+    similarity_model: str | None = None,
 ) -> Path:
     """Write analysis results as JSON and return the report path."""
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -59,7 +61,11 @@ def write_json_report(
         if faq_only
         else {
             "min_similarity": min_similarity,
-            "tfidf_preprocessing": preprocessing,
+            "similarity_method": similarity_method,
+            "similarity_model": similarity_model,
+            "tfidf_preprocessing": (
+                preprocessing if similarity_method == "tfidf" else None
+            ),
         }
     )
     summary = (
@@ -141,6 +147,8 @@ def write_markdown_report(
     preprocessing: str,
     generated_faq: GeneratedFaq | None = None,
     faq_only: bool = False,
+    similarity_method: str = "tfidf",
+    similarity_model: str | None = None,
 ) -> Path:
     """Write analysis results as a human-readable Markdown report."""
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -177,7 +185,12 @@ def write_markdown_report(
         f"- Orphan content pages: {len(orphan_pages)}",
         f"- Link suggestions: {len(suggestions)}",
         f"- Minimum similarity: {min_similarity:.3f}",
-        f"- TF-IDF preprocessing: {preprocessing}",
+        f"- Similarity method: {similarity_method}",
+        *(
+            [f"- Embedding model: {similarity_model}"]
+            if similarity_model
+            else [f"- TF-IDF preprocessing: {preprocessing}"]
+        ),
         "",
         "## Orphan content pages",
         "",
@@ -248,7 +261,12 @@ def write_markdown_report(
             ]
         )
 
-    lines.extend(["## All TF-IDF comparisons", ""])
+    comparison_label = (
+        f"embedding comparisons ({similarity_model})"
+        if similarity_method == "embeddings"
+        else "TF-IDF comparisons"
+    )
+    lines.extend([f"## All {comparison_label}", ""])
     if not similarities:
         lines.append("At least two content pages are required for comparison.")
     else:
@@ -305,6 +323,8 @@ def write_html_report(
     preprocessing: str,
     generated_faq: GeneratedFaq | None = None,
     faq_only: bool = False,
+    similarity_method: str = "tfidf",
+    similarity_model: str | None = None,
 ) -> Path:
     """Write analysis results as a self-contained HTML report."""
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -331,6 +351,8 @@ def write_html_report(
         faq_status_label=faq_status_label,
         min_similarity=min_similarity,
         preprocessing=preprocessing,
+        similarity_method=similarity_method,
+        similarity_model=similarity_model,
         generated_faq=generated_faq,
         faq_only=faq_only,
     )

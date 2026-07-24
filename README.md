@@ -11,12 +11,20 @@ never modifies the website: all results are written to reviewable reports.
 
 - Fetch and analyze URLs from an XML sitemap
 - Fetch only one page with `--faq-only`
+- Respect `robots.txt` rules and crawl delays
+- Block cross-domain and robots-forbidden redirects
+- Limit sitemap audits to 100 URLs by default
+- Limit page and sitemap downloads to 5 MiB and `robots.txt` to 512 KiB
+- Reject unexpected response types such as PDFs, images and videos
+- Reuse unchanged page analyses through HTTP `ETag` and `Last-Modified` caching
+- Reuse unchanged OpenAI embedding vectors for the same embedding model
 - Read local HTML files recursively
 - Extract titles, H1 headings, main content and internal links
 - Exclude selected utility or listing pages from content comparison
 - Identify orphan content pages
 - Detect visible FAQ content and `FAQPage` JSON-LD
 - Compare content pages with TF-IDF and cosine similarity
+- Compare content pages semantically with optional OpenAI embeddings
 - Suggest missing internal link directions and placements
 - Fall back to a language-aware related-reading link
 - Generate grounded FAQs with the OpenAI Responses API
@@ -55,6 +63,37 @@ The tool reads `/sitemap.xml`, fetches the listed pages and analyzes internal
 links, orphan pages, FAQ coverage and TF-IDF content similarity.
 
 This command makes no OpenAI API request unless `--faq-page` is also provided.
+
+Public-site audits process at most 100 sitemap URLs by default. If a larger
+audit is intentional, raise the safety limit explicitly:
+
+```bash
+./.venv/bin/python main.py \
+  --url https://iidalehtonen.com \
+  --max-pages 250 \
+  --out-dir output/site-audit
+```
+
+Public-site audits keep parsed page data in `.seo-linker-cache/pages.json`.
+Later audits send conditional HTTP requests using `ETag` and `Last-Modified`.
+When the server returns `304 Not Modified`, SEO Linker reuses the cached page
+analysis instead of downloading and parsing the HTML again. The cache directory
+is excluded from Git.
+
+TF-IDF remains the local, API-free default. To use semantic embeddings:
+
+```bash
+./.venv/bin/python main.py \
+  --url https://iidalehtonen.com \
+  --similarity embeddings \
+  --out-dir output/site-audit-embeddings
+```
+
+Embedding mode requires `OPENAI_API_KEY`, uses `text-embedding-3-small` by
+default and sends the analyzed page texts to the OpenAI API. Configure another
+embedding model with `OPENAI_EMBEDDING_MODEL` in `.env`. Embedding vectors are
+stored in the local crawl cache. Later runs send only new or changed content
+to the API; changing the model regenerates the vectors.
 
 ### 2. Audit a website and generate FAQs for one sitemap page
 

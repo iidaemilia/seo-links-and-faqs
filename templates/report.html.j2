@@ -81,7 +81,14 @@
         <div class="metric"><strong>{{ orphan_pages | length }}</strong><span>Orphan content pages</span></div>
         <div class="metric"><strong>{{ suggestions | length }}</strong><span>Link suggestions</span></div>
       </section>
-      <p class="settings">Minimum similarity: {{ "%.3f" | format(min_similarity) }} · TF-IDF preprocessing: {{ preprocessing }}</p>
+      <p class="settings">
+        Minimum similarity: {{ "%.3f" | format(min_similarity) }} ·
+        {% if similarity_method == "embeddings" %}
+          Similarity: embeddings · Model: {{ similarity_model }}
+        {% else %}
+          Similarity: TF-IDF · Preprocessing: {{ preprocessing }}
+        {% endif %}
+      </p>
 
       <h2>Orphan content pages</h2>
       {% if orphan_pages %}

@@ -2,6 +2,7 @@
 
 import argparse
 import os
+from dataclasses import replace
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -9,9 +10,22 @@ from dotenv import load_dotenv
 from openai import OpenAIError
 
 from seolinker import __version__
+from seolinker.cache import (
+    CachedPage,
+    calculate_content_hash,
+    load_page_cache,
+    save_page_cache,
+)
 from seolinker.faq import detect_faq_status, faq_status_label
 from seolinker.faq_generator import GeneratedFaq, generate_faqs
-from seolinker.fetch import fetch_page_html, fetch_sitemap_urls
+from seolinker.fetch import (
+    RobotsDeniedError,
+    fetch_page,
+    fetch_page_html,
+    fetch_robots_policy,
+    fetch_sitemap_urls,
+    get_crawl_delay,
+)
 from seolinker.linker import suggest_missing_links
 from seolinker.links import (
     extract_internal_links,
@@ -33,6 +47,10 @@ from seolinker.report import (
     write_markdown_report,
 )
 from seolinker.similarity import calculate_tfidf_similarities, select_stop_words
+from seolinker.similarity import (
+    DEFAULT_EMBEDDING_MODEL,
+    calculate_embedding_similarities,
+)
 
 
 EXCLUDED_CONTENT_PATHS = {"/privacy/", "/writing/"}
@@ -44,6 +62,9 @@ def print_page_results(
     min_similarity: float,
     output_dir: Path,
     generated_faq: GeneratedFaq | None = None,
+    similarity_method: str = "tfidf",
+    embedding_model: str = DEFAULT_EMBEDDING_MODEL,
+    embedding_cache: dict[str, tuple[float, ...]] | None = None,
 ) -> None:
     """Print page-level link data and write the analysis reports."""
     incoming_sources = find_incoming_link_sources(pages)
@@ -73,15 +94,43 @@ def print_page_results(
             f"FAQ: {faq_status})"
         )
 
-    similarities = calculate_tfidf_similarities(pages)
-    stop_words = select_stop_words(pages)
-    preprocessing = "english_stop_words" if stop_words == "english" else "none"
-    preprocessing_label = (
-        "English stop words removed"
-        if preprocessing == "english_stop_words"
-        else "no stop-word list"
-    )
-    print(f"\nTF-IDF similarities ({preprocessing_label}):")
+    if similarity_method == "embeddings":
+        print(f"\nGenerating embeddings with: {embedding_model}")
+        eligible_urls = {
+            page.url
+            for page in pages
+            if page.analyze_content and page.text.strip()
+        }
+        reused_embeddings = len(
+            eligible_urls.intersection(embedding_cache or {})
+        )
+        similarities = calculate_embedding_similarities(
+            pages,
+            model=embedding_model,
+            cached_embeddings=embedding_cache,
+        )
+        print(
+            f"Reused {reused_embeddings} cached embeddings; "
+            f"generated {len(eligible_urls) - reused_embeddings} new embeddings."
+        )
+        preprocessing = "not_applicable"
+        similarity_heading = f"Embedding similarities ({embedding_model})"
+        similarity_model = embedding_model
+    else:
+        similarities = calculate_tfidf_similarities(pages)
+        stop_words = select_stop_words(pages)
+        preprocessing = (
+            "english_stop_words" if stop_words == "english" else "none"
+        )
+        preprocessing_label = (
+            "English stop words removed"
+            if preprocessing == "english_stop_words"
+            else "no stop-word list"
+        )
+        similarity_heading = f"TF-IDF similarities ({preprocessing_label})"
+        similarity_model = None
+
+    print(f"\n{similarity_heading}:")
     if not similarities:
         print("- At least two content pages are required for comparison.")
     else:
@@ -116,6 +165,8 @@ def print_page_results(
         min_similarity=min_similarity,
         preprocessing=preprocessing,
         generated_faq=generated_faq,
+        similarity_method=similarity_method,
+        similarity_model=similarity_model,
     )
     print(f"\nJSON report saved: {report_path}")
     markdown_path = write_markdown_report(
@@ -127,6 +178,8 @@ def print_page_results(
         min_similarity=min_similarity,
         preprocessing=preprocessing,
         generated_faq=generated_faq,
+        similarity_method=similarity_method,
+        similarity_model=similarity_model,
     )
     print(f"Markdown report saved: {markdown_path}")
     html_path = write_html_report(
@@ -137,6 +190,8 @@ def print_page_results(
         min_similarity=min_similarity,
         preprocessing=preprocessing,
         generated_faq=generated_faq,
+        similarity_method=similarity_method,
+        similarity_model=similarity_model,
     )
     print(f"HTML report saved: {html_path}")
 
@@ -177,14 +232,29 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--min-similarity",
         type=float,
-        default=0.15,
-        help="Minimum similarity score for a link suggestion (default: 0.15).",
+        default=None,
+        help=(
+            "Minimum score for a link suggestion "
+            "(default: 0.15 for TF-IDF, 0.70 for embeddings)."
+        ),
+    )
+    parser.add_argument(
+        "--similarity",
+        choices=("tfidf", "embeddings"),
+        default="tfidf",
+        help="Similarity method to use (default: tfidf).",
     )
     parser.add_argument(
         "--out-dir",
         type=Path,
         default=Path("output"),
         help="Directory for generated reports (default: output).",
+    )
+    parser.add_argument(
+        "--max-pages",
+        type=int,
+        default=100,
+        help="Maximum sitemap URLs to audit (default: 100).",
     )
     return parser
 
@@ -194,16 +264,41 @@ def main() -> None:
     load_dotenv()
     parser = build_parser()
     args = parser.parse_args()
+    if args.min_similarity is None:
+        args.min_similarity = 0.70 if args.similarity == "embeddings" else 0.15
     if not 0 <= args.min_similarity <= 1:
         parser.error("--min-similarity must be between 0 and 1.")
+    if args.max_pages < 1:
+        parser.error("--max-pages must be at least 1.")
     if args.faq_page and not args.url:
         parser.error("--faq-page can currently be used only together with --url.")
+    if (
+        not args.faq_only
+        and args.similarity == "embeddings"
+        and not os.getenv("OPENAI_API_KEY")
+    ):
+        parser.error(
+            "OPENAI_API_KEY is required for --similarity embeddings. "
+            "Add it to the local .env file."
+        )
+
+    embedding_model = os.getenv(
+        "OPENAI_EMBEDDING_MODEL",
+        DEFAULT_EMBEDDING_MODEL,
+    )
 
     if args.faq_only:
         if not os.getenv("OPENAI_API_KEY"):
             parser.error("OPENAI_API_KEY is missing. Add it to the local .env file.")
         try:
-            html = fetch_page_html(args.faq_only)
+            robots_policy = fetch_robots_policy(args.faq_only)
+            crawl_delay = get_crawl_delay(robots_policy)
+            print(f"Using crawl delay: {crawl_delay:g} seconds")
+            html = fetch_page_html(
+                args.faq_only,
+                robots_policy,
+                crawl_delay=crawl_delay,
+            )
         except ValueError as error:
             parser.error(str(error))
 
@@ -261,39 +356,98 @@ def main() -> None:
                     faq_status=detect_faq_status(html),
                 )
             )
-        print_page_results(
-            f"Found {len(pages)} HTML files:",
-            pages,
-            args.min_similarity,
-            args.out_dir,
-        )
+        try:
+            print_page_results(
+                f"Found {len(pages)} HTML files:",
+                pages,
+                args.min_similarity,
+                args.out_dir,
+                similarity_method=args.similarity,
+                embedding_model=embedding_model,
+            )
+        except (OpenAIError, ValueError) as error:
+            parser.error(f"Embedding API request failed: {error}")
         return
 
     try:
-        urls = fetch_sitemap_urls(args.url)
+        robots_policy = fetch_robots_policy(args.url)
+        crawl_delay = get_crawl_delay(robots_policy)
+        print(f"Using crawl delay: {crawl_delay:g} seconds")
+        urls = fetch_sitemap_urls(
+            args.url,
+            robots_policy,
+            crawl_delay=crawl_delay,
+            max_pages=args.max_pages,
+        )
     except ValueError as error:
         parser.error(str(error))
 
+    cached_pages = load_page_cache()
+    current_domain = urlsplit(args.url).netloc
+    updated_cache = {
+        url: entry
+        for url, entry in cached_pages.items()
+        if urlsplit(url).netloc != current_domain
+    }
     pages = []
+    reused_page_count = 0
     for url in urls:
+        normalized_url = normalize_url(url)
+        cached_page = cached_pages.get(normalized_url)
         try:
-            html = fetch_page_html(url)
+            fetched_page = fetch_page(
+                url,
+                robots_policy,
+                crawl_delay=crawl_delay,
+                etag=cached_page.etag if cached_page else None,
+                last_modified=(
+                    cached_page.last_modified if cached_page else None
+                ),
+            )
+        except RobotsDeniedError:
+            print(f"Skipping URL forbidden by robots.txt: {url}")
+            continue
         except ValueError as error:
             parser.error(str(error))
+
+        if fetched_page.not_modified:
+            if cached_page is None:
+                parser.error(
+                    f"Page returned 304 Not Modified without cached data: {url}"
+                )
+            pages.append(cached_page.page)
+            updated_cache[normalized_url] = cached_page
+            reused_page_count += 1
+            continue
+
+        if fetched_page.content is None:
+            parser.error(f"Page returned no HTML content: {url}")
+        html = fetched_page.content
         path = urlsplit(url).path
-        pages.append(
-            Page(
-                location=url,
-                url=normalize_url(url),
-                title=extract_title(html),
-                heading=extract_h1(html),
-                text=extract_main_text(html),
-                internal_links=tuple(extract_internal_links(html, url)),
-                language=extract_language(html),
-                analyze_content=path not in EXCLUDED_CONTENT_PATHS,
-                faq_status=detect_faq_status(html),
-            )
+        page = Page(
+            location=url,
+            url=normalized_url,
+            title=extract_title(html),
+            heading=extract_h1(html),
+            text=extract_main_text(html),
+            internal_links=tuple(extract_internal_links(html, url)),
+            language=extract_language(html),
+            analyze_content=path not in EXCLUDED_CONTENT_PATHS,
+            faq_status=detect_faq_status(html),
         )
+        pages.append(page)
+        updated_cache[normalized_url] = CachedPage(
+            page=page,
+            content_hash=calculate_content_hash(html),
+            etag=fetched_page.etag,
+            last_modified=fetched_page.last_modified,
+        )
+
+    save_page_cache(updated_cache)
+    print(
+        f"Reused {reused_page_count} unchanged pages from cache; "
+        f"analyzed {len(pages) - reused_page_count} downloaded pages."
+    )
     generated_faq = None
     if args.faq_page:
         requested_url = normalize_url(args.faq_page)
@@ -318,13 +472,40 @@ def main() -> None:
             print(f"\n{index}. {item.question}")
             print(item.answer)
 
-    print_page_results(
-        f"\nFound {len(pages)} URLs in the sitemap:",
-        pages,
-        args.min_similarity,
-        args.out_dir,
-        generated_faq=generated_faq,
-    )
+    try:
+        embedding_cache = (
+            {
+                url: entry.embedding
+                for url, entry in updated_cache.items()
+                if entry.embedding_model == embedding_model
+                and entry.embedding is not None
+            }
+            if args.similarity == "embeddings"
+            else None
+        )
+        print_page_results(
+            f"\nFound {len(pages)} URLs in the sitemap:",
+            pages,
+            args.min_similarity,
+            args.out_dir,
+            generated_faq=generated_faq,
+            similarity_method=args.similarity,
+            embedding_model=embedding_model,
+            embedding_cache=embedding_cache,
+        )
+    except (OpenAIError, ValueError) as error:
+        parser.error(f"Embedding API request failed: {error}")
+
+    if embedding_cache is not None:
+        for url, embedding in embedding_cache.items():
+            cached_page = updated_cache.get(url)
+            if cached_page is not None:
+                updated_cache[url] = replace(
+                    cached_page,
+                    embedding_model=embedding_model,
+                    embedding=embedding,
+                )
+        save_page_cache(updated_cache)
 
 
 if __name__ == "__main__":
