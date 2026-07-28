@@ -33,8 +33,6 @@ def make_cached_page() -> CachedPage:
         content_hash=calculate_content_hash(b"<html>content</html>"),
         etag='"page-v1"',
         last_modified="Wed, 23 Jul 2026 12:00:00 GMT",
-        embedding_model="text-embedding-3-small",
-        embedding=(0.1, 0.2, 0.3),
     )
 
 

@@ -6,11 +6,9 @@ from pathlib import Path
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
-from seolinker.faq import faq_status_label
+from seolinker.faq import FaqStatus, faq_status_label
 from seolinker.faq_generator import GeneratedFaq
-from seolinker.linker import LinkSuggestion
 from seolinker.models import Page
-from seolinker.similarity import SimilarityResult
 
 
 TEMPLATE_DIR = Path(__file__).resolve().parent.parent / "templates"
@@ -20,14 +18,8 @@ def write_json_report(
     output_dir: Path,
     pages: list[Page],
     incoming_sources: dict[str, set[str]],
-    similarities: list[SimilarityResult],
-    suggestions: list[LinkSuggestion],
-    min_similarity: float,
-    preprocessing: str,
     generated_faq: GeneratedFaq | None = None,
     faq_only: bool = False,
-    similarity_method: str = "tfidf",
-    similarity_model: str | None = None,
 ) -> Path:
     """Write analysis results as JSON and return the report path."""
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -59,14 +51,7 @@ def write_json_report(
     settings = (
         {"faq_model": generated_faq.model if generated_faq else None}
         if faq_only
-        else {
-            "min_similarity": min_similarity,
-            "similarity_method": similarity_method,
-            "similarity_model": similarity_model,
-            "tfidf_preprocessing": (
-                preprocessing if similarity_method == "tfidf" else None
-            ),
-        }
+        else {}
     )
     summary = (
         {
@@ -80,7 +65,10 @@ def write_json_report(
             "pages_found": len(pages),
             "content_pages": sum(page.analyze_content for page in pages),
             "orphan_pages": sum(bool(page["is_orphan"]) for page in page_results),
-            "link_suggestions": len(suggestions),
+            "faq_gaps": sum(
+                page.analyze_content and page.faq_status != FaqStatus.BOTH
+                for page in pages
+            ),
         }
     )
 
@@ -90,30 +78,6 @@ def write_json_report(
         "settings": settings,
         "summary": summary,
         "pages": page_results,
-        "similarities": [
-            {
-                "source": result.source.url,
-                "target": result.target.url,
-                "score": round(result.score, 6),
-            }
-            for result in similarities
-        ],
-        "link_suggestions": [
-            {
-                "source": suggestion.source.url,
-                "target": suggestion.target.url,
-                "similarity": round(suggestion.similarity, 6),
-                "placement_type": suggestion.placement_type,
-                "anchor_text": suggestion.anchor_text,
-                "context_sentence": suggestion.context_sentence,
-                "read_more_text": (
-                    f"{suggestion.read_more_label}: {suggestion.anchor_text}"
-                    if suggestion.placement_type == "read_more"
-                    else None
-                ),
-            }
-            for suggestion in suggestions
-        ],
         "generated_faq": (
             {
                 "page_url": generated_faq.page.url,
@@ -141,14 +105,8 @@ def write_markdown_report(
     output_dir: Path,
     pages: list[Page],
     incoming_sources: dict[str, set[str]],
-    similarities: list[SimilarityResult],
-    suggestions: list[LinkSuggestion],
-    min_similarity: float,
-    preprocessing: str,
     generated_faq: GeneratedFaq | None = None,
     faq_only: bool = False,
-    similarity_method: str = "tfidf",
-    similarity_model: str | None = None,
 ) -> Path:
     """Write analysis results as a human-readable Markdown report."""
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -183,14 +141,7 @@ def write_markdown_report(
         f"- Pages found: {len(pages)}",
         f"- Pages included in content analysis: {sum(page.analyze_content for page in pages)}",
         f"- Orphan content pages: {len(orphan_pages)}",
-        f"- Link suggestions: {len(suggestions)}",
-        f"- Minimum similarity: {min_similarity:.3f}",
-        f"- Similarity method: {similarity_method}",
-        *(
-            [f"- Embedding model: {similarity_model}"]
-            if similarity_model
-            else [f"- TF-IDF preprocessing: {preprocessing}"]
-        ),
+        f"- Pages with FAQ gaps: {sum(page.analyze_content and page.faq_status != FaqStatus.BOTH for page in pages)}",
         "",
         "## Orphan content pages",
         "",
@@ -200,37 +151,6 @@ def write_markdown_report(
         lines.extend(f"- [{page.heading}]({page.url})" for page in orphan_pages)
     else:
         lines.append("No orphan content pages found.")
-
-    lines.extend(["", "## Link suggestions", ""])
-    if not suggestions:
-        lines.append("No new link suggestions found at the current threshold.")
-    else:
-        for index, suggestion in enumerate(suggestions, start=1):
-            lines.extend(
-                [
-                    f"### {index}. {suggestion.source.heading} → {suggestion.target.heading}",
-                    "",
-                    f"- Source: {suggestion.source.url}",
-                    f"- Target: {suggestion.target.url}",
-                    f"- Similarity: {suggestion.similarity:.3f}",
-                ]
-            )
-            if suggestion.placement_type == "contextual":
-                lines.extend(
-                    [
-                        "- Suggestion type: contextual link",
-                        f"- Anchor text: `{suggestion.anchor_text}`",
-                        f"- Placement sentence: {suggestion.context_sentence}",
-                    ]
-                )
-            else:
-                lines.extend(
-                    [
-                        "- Suggestion type: related-reading link",
-                        f"- Suggested text: **{suggestion.read_more_label}:** [{suggestion.anchor_text}]({suggestion.target.url})",
-                    ]
-                )
-            lines.append("")
 
     lines.extend(["## FAQ status", ""])
     for page in pages:
@@ -260,21 +180,6 @@ def write_markdown_report(
                 "",
             ]
         )
-
-    comparison_label = (
-        f"embedding comparisons ({similarity_model})"
-        if similarity_method == "embeddings"
-        else "TF-IDF comparisons"
-    )
-    lines.extend([f"## All {comparison_label}", ""])
-    if not similarities:
-        lines.append("At least two content pages are required for comparison.")
-    else:
-        for result in similarities:
-            lines.append(
-                f"- {result.source.heading} ↔ {result.target.heading}: "
-                f"{result.score:.3f}"
-            )
 
     report_path.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
     return report_path
@@ -318,13 +223,8 @@ def write_html_report(
     output_dir: Path,
     pages: list[Page],
     incoming_sources: dict[str, set[str]],
-    suggestions: list[LinkSuggestion],
-    min_similarity: float,
-    preprocessing: str,
     generated_faq: GeneratedFaq | None = None,
     faq_only: bool = False,
-    similarity_method: str = "tfidf",
-    similarity_model: str | None = None,
 ) -> Path:
     """Write analysis results as a self-contained HTML report."""
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -346,13 +246,11 @@ def write_html_report(
         pages=pages,
         content_pages=content_pages,
         orphan_pages=orphan_pages,
-        suggestions=suggestions,
         incoming_sources=incoming_sources,
         faq_status_label=faq_status_label,
-        min_similarity=min_similarity,
-        preprocessing=preprocessing,
-        similarity_method=similarity_method,
-        similarity_model=similarity_model,
+        faq_gaps=[
+            page for page in content_pages if page.faq_status != FaqStatus.BOTH
+        ],
         generated_faq=generated_faq,
         faq_only=faq_only,
     )
@@ -369,13 +267,10 @@ def write_faq_only_reports(
         "output_dir": output_dir,
         "pages": [page],
         "incoming_sources": {page.url: set()},
-        "suggestions": [],
-        "min_similarity": 0.0,
-        "preprocessing": "not_run",
         "generated_faq": generated_faq,
         "faq_only": True,
     }
-    json_path = write_json_report(similarities=[], **common)
-    markdown_path = write_markdown_report(similarities=[], **common)
+    json_path = write_json_report(**common)
+    markdown_path = write_markdown_report(**common)
     html_path = write_html_report(**common)
     return json_path, markdown_path, html_path

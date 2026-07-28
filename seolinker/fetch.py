@@ -14,6 +14,7 @@ DEFAULT_CRAWL_DELAY = 1.0
 DEFAULT_MAX_PAGES = 100
 MAX_PAGE_BYTES = 5 * 1024 * 1024
 MAX_SITEMAP_BYTES = 5 * 1024 * 1024
+MAX_SITEMAPS = 50
 MAX_ROBOTS_BYTES = 512 * 1024
 HTML_CONTENT_TYPES = {"text/html", "application/xhtml+xml"}
 SITEMAP_CONTENT_TYPES = {
@@ -248,57 +249,107 @@ def fetch_sitemap_urls(
     base_url: str,
     policy: RobotFileParser | None = None,
     crawl_delay: float = 0,
-    max_pages: int = DEFAULT_MAX_PAGES,
+    max_pages: int | None = DEFAULT_MAX_PAGES,
+    included_paths: tuple[str, ...] = (),
+    excluded_paths: tuple[str, ...] = (),
 ) -> list[str]:
-    """Fetch sitemap.xml and return URLs from the same domain."""
+    """Fetch sitemap.xml, including sitemap indexes, and return same-domain URLs."""
     parsed_base_url = urlparse(base_url)
     if parsed_base_url.scheme not in {"http", "https"} or not parsed_base_url.netloc:
         raise ValueError(f"Invalid website URL: {base_url}")
 
     sitemap_url = urljoin(base_url, "/sitemap.xml")
-    ensure_robots_allowed(sitemap_url, policy)
-    if crawl_delay > 0:
-        time.sleep(crawl_delay)
-    request = Request(sitemap_url, headers={"User-Agent": HTTP_USER_AGENT})
+    sitemap_queue = [sitemap_url]
+    visited_sitemaps: set[str] = set()
+    urls: set[str] = set()
 
-    try:
-        with open_safely(request, policy) as response:
-            ensure_content_type(
-                response,
-                SITEMAP_CONTENT_TYPES,
-                "Sitemap",
-                sitemap_url,
+    while sitemap_queue:
+        current_sitemap_url = sitemap_queue.pop(0)
+        if current_sitemap_url in visited_sitemaps:
+            continue
+        if len(visited_sitemaps) >= MAX_SITEMAPS:
+            raise ValueError(
+                f"Sitemap index exceeds the safety limit of {MAX_SITEMAPS} "
+                "sitemap files."
             )
-            sitemap_xml = read_limited(
-                response,
-                MAX_SITEMAP_BYTES,
-                "Sitemap",
-                sitemap_url,
-            )
-    except HTTPError as error:
-        raise ValueError(
-            f"Sitemap request failed: HTTP {error.code} ({sitemap_url})"
-        ) from error
-    except URLError as error:
-        raise ValueError(f"Sitemap request failed: {error.reason}") from error
+        visited_sitemaps.add(current_sitemap_url)
 
-    try:
-        root = ElementTree.fromstring(sitemap_xml)
-    except ElementTree.ParseError as error:
-        raise ValueError(f"Sitemap is not valid XML: {sitemap_url}") from error
-
-    urls = []
-    for location in root.findall("{*}url/{*}loc"):
-        if location.text:
-            url = location.text.strip()
-            if urlparse(url).netloc == parsed_base_url.netloc:
-                urls.append(url)
-
-    if len(urls) > max_pages:
-        raise ValueError(
-            f"Sitemap contains {len(urls)} same-domain URLs, exceeding the "
-            f"safety limit of {max_pages}. Use --max-pages to raise the limit "
-            "deliberately."
+        ensure_robots_allowed(current_sitemap_url, policy)
+        if crawl_delay > 0:
+            time.sleep(crawl_delay)
+        request = Request(
+            current_sitemap_url,
+            headers={"User-Agent": HTTP_USER_AGENT},
         )
+
+        try:
+            with open_safely(request, policy) as response:
+                ensure_content_type(
+                    response,
+                    SITEMAP_CONTENT_TYPES,
+                    "Sitemap",
+                    current_sitemap_url,
+                )
+                sitemap_xml = read_limited(
+                    response,
+                    MAX_SITEMAP_BYTES,
+                    "Sitemap",
+                    current_sitemap_url,
+                )
+        except HTTPError as error:
+            raise ValueError(
+                f"Sitemap request failed: HTTP {error.code} "
+                f"({current_sitemap_url})"
+            ) from error
+        except URLError as error:
+            raise ValueError(
+                f"Sitemap request failed ({current_sitemap_url}): "
+                f"{error.reason}"
+            ) from error
+
+        try:
+            root = ElementTree.fromstring(sitemap_xml)
+        except ElementTree.ParseError as error:
+            raise ValueError(
+                f"Sitemap is not valid XML: {current_sitemap_url}"
+            ) from error
+
+        for location in root.findall("{*}url/{*}loc"):
+            if location.text:
+                url = location.text.strip()
+                parsed_url = urlparse(url)
+                is_included = not included_paths or any(
+                    parsed_url.path == prefix.rstrip("/")
+                    or parsed_url.path.startswith(prefix)
+                    for prefix in included_paths
+                )
+                is_excluded = any(
+                    parsed_url.path == prefix.rstrip("/")
+                    or parsed_url.path.startswith(prefix)
+                    for prefix in excluded_paths
+                )
+                if (
+                    parsed_url.netloc == parsed_base_url.netloc
+                    and is_included
+                    and not is_excluded
+                ):
+                    urls.add(url)
+
+        for location in root.findall("{*}sitemap/{*}loc"):
+            if location.text:
+                child_sitemap_url = location.text.strip()
+                parsed_child = urlparse(child_sitemap_url)
+                if (
+                    parsed_child.scheme in {"http", "https"}
+                    and parsed_child.netloc == parsed_base_url.netloc
+                ):
+                    sitemap_queue.append(child_sitemap_url)
+
+        if max_pages is not None and len(urls) > max_pages:
+            raise ValueError(
+                f"Sitemap selection contains {len(urls)} URLs, exceeding the "
+                f"safety limit of {max_pages}. Use --max-pages to raise the "
+                "limit deliberately."
+            )
 
     return sorted(urls)

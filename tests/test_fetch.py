@@ -168,6 +168,94 @@ class FetchSitemapUrlsTests(unittest.TestCase):
         )
 
     @patch("seolinker.fetch.build_opener")
+    def test_returns_urls_from_same_domain_sitemap_index(
+        self, mock_build_opener: MagicMock
+    ) -> None:
+        index_response = MagicMock()
+        index_response.read.return_value = (
+            b"<sitemapindex>"
+            b"<sitemap><loc>https://example.com/pages.xml</loc></sitemap>"
+            b"<sitemap><loc>https://other.example/external.xml</loc></sitemap>"
+            b"</sitemapindex>"
+        )
+        index_response.headers.get_content_type.return_value = "application/xml"
+        pages_response = MagicMock()
+        pages_response.read.return_value = (
+            b"<urlset>"
+            b"<url><loc>https://example.com/one</loc></url>"
+            b"<url><loc>https://example.com/two</loc></url>"
+            b"</urlset>"
+        )
+        pages_response.headers.get_content_type.return_value = "application/xml"
+        mock_build_opener.return_value.open.return_value.__enter__.side_effect = [
+            index_response,
+            pages_response,
+        ]
+
+        urls = fetch_sitemap_urls("https://example.com", max_pages=2)
+
+        self.assertEqual(
+            urls,
+            ["https://example.com/one", "https://example.com/two"],
+        )
+        self.assertEqual(mock_build_opener.return_value.open.call_count, 2)
+
+    @patch("seolinker.fetch.build_opener")
+    def test_excludes_paths_before_applying_page_limit(
+        self, mock_build_opener: MagicMock
+    ) -> None:
+        response = MagicMock()
+        response.read.return_value = (
+            b"<urlset>"
+            b"<url><loc>https://example.com/en/one</loc></url>"
+            b"<url><loc>https://example.com/fi/one</loc></url>"
+            b"</urlset>"
+        )
+        response.headers.get_content_type.return_value = "application/xml"
+        mock_build_opener.return_value.open.return_value.__enter__.return_value = (
+            response
+        )
+
+        urls = fetch_sitemap_urls(
+            "https://example.com",
+            max_pages=1,
+            excluded_paths=("/en/",),
+        )
+
+        self.assertEqual(urls, ["https://example.com/fi/one"])
+
+    @patch("seolinker.fetch.build_opener")
+    def test_includes_paths_before_applying_page_limit(
+        self, mock_build_opener: MagicMock
+    ) -> None:
+        response = MagicMock()
+        response.read.return_value = (
+            b"<urlset>"
+            b"<url><loc>https://example.com/articles/one</loc></url>"
+            b"<url><loc>https://example.com/products/one</loc></url>"
+            b"<url><loc>https://example.com/products/two</loc></url>"
+            b"</urlset>"
+        )
+        response.headers.get_content_type.return_value = "application/xml"
+        mock_build_opener.return_value.open.return_value.__enter__.return_value = (
+            response
+        )
+
+        urls = fetch_sitemap_urls(
+            "https://example.com",
+            max_pages=2,
+            included_paths=("/products/",),
+        )
+
+        self.assertEqual(
+            urls,
+            [
+                "https://example.com/products/one",
+                "https://example.com/products/two",
+            ],
+        )
+
+    @patch("seolinker.fetch.build_opener")
     def test_rejects_sitemap_over_limit(
         self, mock_build_opener: MagicMock
     ) -> None:

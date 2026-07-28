@@ -9,7 +9,7 @@ from seolinker.faq import FaqStatus
 from seolinker.models import Page
 
 
-CACHE_VERSION = 1
+CACHE_VERSION = 2
 DEFAULT_CACHE_PATH = Path(".seo-linker-cache/pages.json")
 
 
@@ -21,8 +21,6 @@ class CachedPage:
     content_hash: str
     etag: str | None = None
     last_modified: str | None = None
-    embedding_model: str | None = None
-    embedding: tuple[float, ...] | None = None
 
 
 def calculate_content_hash(content: bytes) -> str:
@@ -58,12 +56,6 @@ def load_page_cache(path: Path = DEFAULT_CACHE_PATH) -> dict[str, CachedPage]:
                 content_hash=entry["content_hash"],
                 etag=entry.get("etag"),
                 last_modified=entry.get("last_modified"),
-                embedding_model=entry.get("embedding_model"),
-                embedding=(
-                    tuple(entry["embedding"])
-                    if entry.get("embedding") is not None
-                    else None
-                ),
             )
         return cached_pages
     except (
@@ -88,10 +80,6 @@ def save_page_cache(
                 "content_hash": entry.content_hash,
                 "etag": entry.etag,
                 "last_modified": entry.last_modified,
-                "embedding_model": entry.embedding_model,
-                "embedding": (
-                    list(entry.embedding) if entry.embedding is not None else None
-                ),
                 "page": {
                     "location": entry.page.location,
                     "url": entry.page.url,

@@ -2,7 +2,6 @@
 
 import argparse
 import os
-from dataclasses import replace
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -26,7 +25,6 @@ from seolinker.fetch import (
     fetch_sitemap_urls,
     get_crawl_delay,
 )
-from seolinker.linker import suggest_missing_links
 from seolinker.links import (
     extract_internal_links,
     find_incoming_link_sources,
@@ -46,27 +44,16 @@ from seolinker.report import (
     write_json_report,
     write_markdown_report,
 )
-from seolinker.similarity import calculate_tfidf_similarities, select_stop_words
-from seolinker.similarity import (
-    DEFAULT_EMBEDDING_MODEL,
-    calculate_embedding_similarities,
-)
-
-
 EXCLUDED_CONTENT_PATHS = {"/privacy/", "/writing/"}
 
 
 def print_page_results(
     heading: str,
     pages: list[Page],
-    min_similarity: float,
     output_dir: Path,
     generated_faq: GeneratedFaq | None = None,
-    similarity_method: str = "tfidf",
-    embedding_model: str = DEFAULT_EMBEDDING_MODEL,
-    embedding_cache: dict[str, tuple[float, ...]] | None = None,
 ) -> None:
-    """Print page-level link data and write the analysis reports."""
+    """Print orphan and FAQ data and write the audit reports."""
     incoming_sources = find_incoming_link_sources(pages)
     print(heading)
 
@@ -94,104 +81,25 @@ def print_page_results(
             f"FAQ: {faq_status})"
         )
 
-    if similarity_method == "embeddings":
-        print(f"\nGenerating embeddings with: {embedding_model}")
-        eligible_urls = {
-            page.url
-            for page in pages
-            if page.analyze_content and page.text.strip()
-        }
-        reused_embeddings = len(
-            eligible_urls.intersection(embedding_cache or {})
-        )
-        similarities = calculate_embedding_similarities(
-            pages,
-            model=embedding_model,
-            cached_embeddings=embedding_cache,
-        )
-        print(
-            f"Reused {reused_embeddings} cached embeddings; "
-            f"generated {len(eligible_urls) - reused_embeddings} new embeddings."
-        )
-        preprocessing = "not_applicable"
-        similarity_heading = f"Embedding similarities ({embedding_model})"
-        similarity_model = embedding_model
-    else:
-        similarities = calculate_tfidf_similarities(pages)
-        stop_words = select_stop_words(pages)
-        preprocessing = (
-            "english_stop_words" if stop_words == "english" else "none"
-        )
-        preprocessing_label = (
-            "English stop words removed"
-            if preprocessing == "english_stop_words"
-            else "no stop-word list"
-        )
-        similarity_heading = f"TF-IDF similarities ({preprocessing_label})"
-        similarity_model = None
-
-    print(f"\n{similarity_heading}:")
-    if not similarities:
-        print("- At least two content pages are required for comparison.")
-    else:
-        for result in similarities:
-            print(
-                f"- {result.source.location} ↔ {result.target.location}: "
-                f"{result.score:.3f}"
-            )
-
-    suggestions = suggest_missing_links(similarities, min_similarity=min_similarity)
-    print(f"\nSuggested missing link directions (threshold {min_similarity:.3f}):")
-    if not suggestions:
-        print("- No new link directions found at the current threshold.")
-    else:
-        for suggestion in suggestions:
-            print(
-                f"- {suggestion.source.location} → {suggestion.target.location} "
-                f"({suggestion.similarity:.3f})"
-            )
-            if suggestion.placement_type == "contextual":
-                print(f'  Anchor: "{suggestion.anchor_text}"')
-                print(f'  Placement sentence: "{suggestion.context_sentence}"')
-            else:
-                print(f"  {suggestion.read_more_label}: {suggestion.anchor_text}")
-
     report_path = write_json_report(
         output_dir=output_dir,
         pages=pages,
         incoming_sources=incoming_sources,
-        similarities=similarities,
-        suggestions=suggestions,
-        min_similarity=min_similarity,
-        preprocessing=preprocessing,
         generated_faq=generated_faq,
-        similarity_method=similarity_method,
-        similarity_model=similarity_model,
     )
     print(f"\nJSON report saved: {report_path}")
     markdown_path = write_markdown_report(
         output_dir=output_dir,
         pages=pages,
         incoming_sources=incoming_sources,
-        similarities=similarities,
-        suggestions=suggestions,
-        min_similarity=min_similarity,
-        preprocessing=preprocessing,
         generated_faq=generated_faq,
-        similarity_method=similarity_method,
-        similarity_model=similarity_model,
     )
     print(f"Markdown report saved: {markdown_path}")
     html_path = write_html_report(
         output_dir=output_dir,
         pages=pages,
         incoming_sources=incoming_sources,
-        suggestions=suggestions,
-        min_similarity=min_similarity,
-        preprocessing=preprocessing,
         generated_faq=generated_faq,
-        similarity_method=similarity_method,
-        similarity_model=similarity_model,
     )
     print(f"HTML report saved: {html_path}")
 
@@ -199,7 +107,7 @@ def print_page_results(
 def build_parser() -> argparse.ArgumentParser:
     """Build the command-line argument parser."""
     parser = argparse.ArgumentParser(
-        description="Analyze internal linking on a static HTML website."
+        description="Audit orphan pages and FAQ coverage on a website."
     )
     parser.add_argument(
         "--version",
@@ -230,21 +138,6 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
-        "--min-similarity",
-        type=float,
-        default=None,
-        help=(
-            "Minimum score for a link suggestion "
-            "(default: 0.15 for TF-IDF, 0.70 for embeddings)."
-        ),
-    )
-    parser.add_argument(
-        "--similarity",
-        choices=("tfidf", "embeddings"),
-        default="tfidf",
-        help="Similarity method to use (default: tfidf).",
-    )
-    parser.add_argument(
         "--out-dir",
         type=Path,
         default=Path("output"),
@@ -256,6 +149,32 @@ def build_parser() -> argparse.ArgumentParser:
         default=100,
         help="Maximum sitemap URLs to audit (default: 100).",
     )
+    parser.add_argument(
+        "--include-path",
+        action="append",
+        default=[],
+        help=(
+            "Include only a URL path prefix before crawling. "
+            "Repeat the option to include multiple paths."
+        ),
+    )
+    parser.add_argument(
+        "--exclude-path",
+        action="append",
+        default=[],
+        help=(
+            "Exclude a URL path prefix before crawling. "
+            "Repeat the option to exclude multiple paths."
+        ),
+    )
+    parser.add_argument(
+        "--list-urls",
+        action="store_true",
+        help=(
+            "List and group sitemap URLs after path exclusions without "
+            "downloading page HTML."
+        ),
+    )
     return parser
 
 
@@ -264,29 +183,24 @@ def main() -> None:
     load_dotenv()
     parser = build_parser()
     args = parser.parse_args()
-    if args.min_similarity is None:
-        args.min_similarity = 0.70 if args.similarity == "embeddings" else 0.15
-    if not 0 <= args.min_similarity <= 1:
-        parser.error("--min-similarity must be between 0 and 1.")
     if args.max_pages < 1:
         parser.error("--max-pages must be at least 1.")
+    if args.list_urls and not args.url:
+        parser.error("--list-urls can be used only together with --url.")
+    included_paths = []
+    for path in args.include_path:
+        if not path.startswith("/"):
+            parser.error("--include-path values must start with '/'.")
+        normalized_path = path if path.endswith("/") else f"{path}/"
+        included_paths.append(normalized_path)
+    excluded_paths = []
+    for path in args.exclude_path:
+        if not path.startswith("/"):
+            parser.error("--exclude-path values must start with '/'.")
+        normalized_path = path if path.endswith("/") else f"{path}/"
+        excluded_paths.append(normalized_path)
     if args.faq_page and not args.url:
         parser.error("--faq-page can currently be used only together with --url.")
-    if (
-        not args.faq_only
-        and args.similarity == "embeddings"
-        and not os.getenv("OPENAI_API_KEY")
-    ):
-        parser.error(
-            "OPENAI_API_KEY is required for --similarity embeddings. "
-            "Add it to the local .env file."
-        )
-
-    embedding_model = os.getenv(
-        "OPENAI_EMBEDDING_MODEL",
-        DEFAULT_EMBEDDING_MODEL,
-    )
-
     if args.faq_only:
         if not os.getenv("OPENAI_API_KEY"):
             parser.error("OPENAI_API_KEY is missing. Add it to the local .env file.")
@@ -360,13 +274,10 @@ def main() -> None:
             print_page_results(
                 f"Found {len(pages)} HTML files:",
                 pages,
-                args.min_similarity,
                 args.out_dir,
-                similarity_method=args.similarity,
-                embedding_model=embedding_model,
             )
-        except (OpenAIError, ValueError) as error:
-            parser.error(f"Embedding API request failed: {error}")
+        except ValueError as error:
+            parser.error(str(error))
         return
 
     try:
@@ -377,10 +288,28 @@ def main() -> None:
             args.url,
             robots_policy,
             crawl_delay=crawl_delay,
-            max_pages=args.max_pages,
+            max_pages=None if args.list_urls else args.max_pages,
+            included_paths=tuple(included_paths),
+            excluded_paths=tuple(excluded_paths),
         )
     except ValueError as error:
         parser.error(str(error))
+
+    if args.list_urls:
+        path_groups: dict[str, int] = {}
+        for url in urls:
+            path_parts = [part for part in urlsplit(url).path.split("/") if part]
+            group = f"/{path_parts[0]}/" if path_parts else "/"
+            path_groups[group] = path_groups.get(group, 0) + 1
+
+        print(f"\nFound {len(urls)} sitemap URLs after exclusions.")
+        print("\nURL groups:")
+        for group, count in sorted(path_groups.items()):
+            print(f"- {group}: {count}")
+        print("\nURLs:")
+        for url in urls:
+            print(f"- {url}")
+        return
 
     cached_pages = load_page_cache()
     current_domain = urlsplit(args.url).netloc
@@ -472,40 +401,12 @@ def main() -> None:
             print(f"\n{index}. {item.question}")
             print(item.answer)
 
-    try:
-        embedding_cache = (
-            {
-                url: entry.embedding
-                for url, entry in updated_cache.items()
-                if entry.embedding_model == embedding_model
-                and entry.embedding is not None
-            }
-            if args.similarity == "embeddings"
-            else None
-        )
-        print_page_results(
-            f"\nFound {len(pages)} URLs in the sitemap:",
-            pages,
-            args.min_similarity,
-            args.out_dir,
-            generated_faq=generated_faq,
-            similarity_method=args.similarity,
-            embedding_model=embedding_model,
-            embedding_cache=embedding_cache,
-        )
-    except (OpenAIError, ValueError) as error:
-        parser.error(f"Embedding API request failed: {error}")
-
-    if embedding_cache is not None:
-        for url, embedding in embedding_cache.items():
-            cached_page = updated_cache.get(url)
-            if cached_page is not None:
-                updated_cache[url] = replace(
-                    cached_page,
-                    embedding_model=embedding_model,
-                    embedding=embedding,
-                )
-        save_page_cache(updated_cache)
+    print_page_results(
+        f"\nFound {len(pages)} URLs in the sitemap:",
+        pages,
+        args.out_dir,
+        generated_faq=generated_faq,
+    )
 
 
 if __name__ == "__main__":

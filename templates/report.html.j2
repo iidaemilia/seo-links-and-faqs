@@ -72,23 +72,15 @@
   <body>
     <main>
       <h1>SEO Linker report</h1>
-      <p class="intro">{% if faq_only %}FAQ suggestions and publication-ready code for one page.{% else %}Internal linking opportunities and FAQ coverage for human review.{% endif %}</p>
+      <p class="intro">{% if faq_only %}FAQ suggestions and publication-ready code for one page.{% else %}Orphan-page and FAQ coverage audit for human review.{% endif %}</p>
 
       {% if not faq_only %}
       <section class="summary" aria-label="Analysis summary">
         <div class="metric"><strong>{{ pages | length }}</strong><span>Pages found</span></div>
         <div class="metric"><strong>{{ content_pages | length }}</strong><span>Content pages analyzed</span></div>
         <div class="metric"><strong>{{ orphan_pages | length }}</strong><span>Orphan content pages</span></div>
-        <div class="metric"><strong>{{ suggestions | length }}</strong><span>Link suggestions</span></div>
+        <div class="metric"><strong>{{ faq_gaps | length }}</strong><span>Pages with FAQ gaps</span></div>
       </section>
-      <p class="settings">
-        Minimum similarity: {{ "%.3f" | format(min_similarity) }} ·
-        {% if similarity_method == "embeddings" %}
-          Similarity: embeddings · Model: {{ similarity_model }}
-        {% else %}
-          Similarity: TF-IDF · Preprocessing: {{ preprocessing }}
-        {% endif %}
-      </p>
 
       <h2>Orphan content pages</h2>
       {% if orphan_pages %}
@@ -99,30 +91,6 @@
         </div>
       {% else %}
         <p class="empty">No orphan content pages found.</p>
-      {% endif %}
-
-      <h2>Link suggestions</h2>
-      {% if suggestions %}
-        <div class="cards">
-          {% for suggestion in suggestions %}
-            <article class="card">
-              <h3 class="direction">{{ suggestion.source.heading }} → {{ suggestion.target.heading }}</h3>
-              <div class="details">
-                <div><div class="label">Source</div><a href="{{ suggestion.source.url }}">Open source page</a></div>
-                <div><div class="label">Target</div><a href="{{ suggestion.target.url }}">Open target page</a></div>
-                <div><div class="label">Similarity</div>{{ "%.3f" | format(suggestion.similarity) }}</div>
-                <div><div class="label">Placement</div>{{ suggestion.placement_type | replace("_", " ") }}</div>
-              </div>
-              {% if suggestion.placement_type == "contextual" %}
-                <p class="suggested-copy"><strong>Anchor:</strong> {{ suggestion.anchor_text }}<br><strong>Placement sentence:</strong> {{ suggestion.context_sentence }}</p>
-              {% else %}
-                <p class="suggested-copy"><strong>{{ suggestion.read_more_label }}:</strong> <a href="{{ suggestion.target.url }}">{{ suggestion.anchor_text }}</a></p>
-              {% endif %}
-            </article>
-          {% endfor %}
-        </div>
-      {% else %}
-        <p class="empty">No new link suggestions found at the current threshold.</p>
       {% endif %}
 
       <h2>FAQ coverage</h2>
@@ -185,7 +153,7 @@
       </div>
       {% endif %}
 
-      <footer>Generated {{ generated_at.strftime("%Y-%m-%d %H:%M UTC") }}. Review all suggestions before editing your website.</footer>
+      <footer>Generated {{ generated_at.strftime("%Y-%m-%d %H:%M UTC") }}. Review the audit before editing your website.</footer>
     </main>
     <script>
       document.querySelectorAll("[data-copy-target]").forEach((button) => {

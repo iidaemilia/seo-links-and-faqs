@@ -1,36 +1,34 @@
 # SEO Linker
 
-A Python command-line tool for finding internal linking opportunities,
-checking FAQ coverage and generating page-specific FAQ suggestions.
+A Python command-line tool for auditing orphan pages and FAQ coverage, and for
+generating page-specific FAQ suggestions.
 
-The tool can analyze a public website through its XML sitemap, read a local
-directory of HTML files or fetch a single page for fast FAQ generation. It
-never modifies the website: all results are written to reviewable reports.
+The tool can analyze a public website through its XML sitemap, inspect a local
+directory of HTML files or fetch one public page for FAQ generation. It never
+modifies the website. All results are saved as local reports for human review.
 
 ## Current capabilities
 
-- Fetch and analyze URLs from an XML sitemap
-- Fetch only one page with `--faq-only`
+- Read regular XML sitemaps and sitemap indexes
+- Keep sitemap and page requests on the original domain
 - Respect `robots.txt` rules and crawl delays
 - Block cross-domain and robots-forbidden redirects
-- Limit sitemap audits to 100 URLs by default
+- Limit sitemap audits to 100 selected URLs by default
+- Include or exclude URL path prefixes before crawling
+- List selected sitemap URLs without downloading page HTML
 - Limit page and sitemap downloads to 5 MiB and `robots.txt` to 512 KiB
 - Reject unexpected response types such as PDFs, images and videos
-- Reuse unchanged page analyses through HTTP `ETag` and `Last-Modified` caching
-- Reuse unchanged OpenAI embedding vectors for the same embedding model
-- Read local HTML files recursively
-- Extract titles, H1 headings, main content and internal links
-- Exclude selected utility or listing pages from content comparison
-- Identify orphan content pages
+- Reuse unchanged page analyses with `ETag` and `Last-Modified`
+- Extract titles, H1 headings, main text, language and internal links
+- Identify orphan content pages and list their URLs
 - Detect visible FAQ content and `FAQPage` JSON-LD
-- Compare content pages with TF-IDF and cosine similarity
-- Compare content pages semantically with optional OpenAI embeddings
-- Suggest missing internal link directions and placements
-- Fall back to a language-aware related-reading link
 - Generate grounded FAQs with the OpenAI Responses API
 - Validate generated FAQ data with Structured Outputs
 - Produce visible FAQ HTML and matching `FAQPage` JSON-LD
 - Export JSON, Markdown and self-contained HTML reports
+
+The earlier internal-link recommendation experiment is preserved separately in
+[docs/internal-linking-experiment.md](docs/internal-linking-experiment.md).
 
 ## Requirements
 
@@ -46,82 +44,95 @@ python3 -m venv .venv
 ./.venv/bin/python -m pip install -r requirements.txt
 ```
 
-The virtual environment keeps this project's packages separate from the rest
-of your computer.
+## Usage
 
-## Usage modes
-
-### 1. Audit a public website
+### Audit a public website
 
 ```bash
 ./.venv/bin/python main.py \
-  --url https://iidalehtonen.com \
+  --url https://example.com \
   --out-dir output/site-audit
 ```
 
-The tool reads `/sitemap.xml`, fetches the listed pages and analyzes internal
-links, orphan pages, FAQ coverage and TF-IDF content similarity.
+The audit reads `/robots.txt` and `/sitemap.xml`, follows same-domain sitemap
+indexes, fetches the selected pages and reports orphan pages and FAQ coverage.
+It makes no OpenAI API request unless `--faq-page` is also used.
 
-This command makes no OpenAI API request unless `--faq-page` is also provided.
-
-Public-site audits process at most 100 sitemap URLs by default. If a larger
-audit is intentional, raise the safety limit explicitly:
+Public audits process at most 100 selected sitemap URLs by default. Raise the
+limit only when the larger crawl is intentional:
 
 ```bash
 ./.venv/bin/python main.py \
-  --url https://iidalehtonen.com \
+  --url https://example.com \
   --max-pages 250 \
   --out-dir output/site-audit
 ```
 
-Public-site audits keep parsed page data in `.seo-linker-cache/pages.json`.
-Later audits send conditional HTTP requests using `ETag` and `Last-Modified`.
-When the server returns `304 Not Modified`, SEO Linker reuses the cached page
-analysis instead of downloading and parsing the HTML again. The cache directory
-is excluded from Git.
+Parsed pages are stored in `.seo-linker-cache/pages.json`. Later audits send
+conditional requests using `ETag` and `Last-Modified`. A `304 Not Modified`
+response reuses the cached analysis. The cache is excluded from Git.
 
-TF-IDF remains the local, API-free default. To use semantic embeddings:
+### Inspect sitemap URLs before crawling
 
 ```bash
 ./.venv/bin/python main.py \
-  --url https://iidalehtonen.com \
-  --similarity embeddings \
-  --out-dir output/site-audit-embeddings
+  --url https://example.com \
+  --list-urls
 ```
 
-Embedding mode requires `OPENAI_API_KEY`, uses `text-embedding-3-small` by
-default and sends the analyzed page texts to the OpenAI API. Configure another
-embedding model with `OPENAI_EMBEDDING_MODEL` in `.env`. Embedding vectors are
-stored in the local crawl cache. Later runs send only new or changed content
-to the API; changing the model regenerates the vectors.
+This lists and groups sitemap URLs without downloading page HTML or writing a
+report.
 
-### 2. Audit a website and generate FAQs for one sitemap page
+### Limit an audit by URL path
+
+Include one or more path prefixes:
 
 ```bash
 ./.venv/bin/python main.py \
-  --url https://iidalehtonen.com \
-  --faq-page https://iidalehtonen.com/writing/should-you-build-your-website-with-ai/ \
-  --out-dir output/site-audit-with-faq
+  --url https://example.com \
+  --include-path /products/ \
+  --include-path /services/ \
+  --out-dir output/selected-sections
 ```
 
-This performs the full sitemap audit and makes one OpenAI API request for the
-exact page selected with `--faq-page`.
-
-### 3. Generate FAQs for one page without a site audit
+Exclude unwanted prefixes:
 
 ```bash
 ./.venv/bin/python main.py \
-  --faq-only https://iidalehtonen.com/writing/should-you-build-your-website-with-ai/ \
-  --out-dir output/ai-website-faq
+  --url https://example.com \
+  --exclude-path /en/ \
+  --exclude-path /privacy/ \
+  --out-dir output/filtered-audit
 ```
 
-This fetches only the selected page and makes one OpenAI API request. It skips
-the sitemap, orphan-page checks, TF-IDF and internal-link analysis.
+Path-limited orphan results describe only the selected crawl. A page may appear
+orphaned when its incoming link comes from a page outside that selection. Use a
+complete site crawl when you need authoritative sitewide orphan detection.
 
-Use this mode when you need FAQs for one page and do not need a fresh sitewide
-audit.
+### Audit a site and generate FAQ suggestions for one sitemap page
 
-### 4. Analyze local HTML files
+```bash
+./.venv/bin/python main.py \
+  --url https://example.com \
+  --faq-page https://example.com/guides/example/ \
+  --out-dir output/audit-with-faq
+```
+
+This performs the audit and makes one OpenAI API request for the exact selected
+page.
+
+### Generate FAQs for one page only
+
+```bash
+./.venv/bin/python main.py \
+  --faq-only https://example.com/guides/example/ \
+  --out-dir output/example-faq
+```
+
+This reads only the selected page, makes one OpenAI API request and skips the
+sitemap and orphan-page audit.
+
+### Analyze local HTML files
 
 ```bash
 ./.venv/bin/python main.py \
@@ -129,9 +140,8 @@ audit.
   --out-dir output/sample
 ```
 
-The Finnish sample site is intentional: it acts as a small test fixture for
-Unicode text and language-aware link labels. This command makes no OpenAI API
-request.
+The bundled Finnish sample site is a small fixture for Unicode text, orphan
+detection and FAQ coverage. This command makes no OpenAI API request.
 
 ## OpenAI API setup
 
@@ -141,53 +151,48 @@ Copy the example configuration:
 cp .env.example .env
 ```
 
-Then replace `your_api_key_here` in `.env` with your own API key. The real
-`.env` file is excluded from Git and must never be committed.
+Replace `your_api_key_here` with your API key. The real `.env` file is excluded
+from Git and must not be committed.
 
-The default FAQ model is configured in `.env`:
+The FAQ model can be configured in `.env`:
 
 ```text
 OPENAI_FAQ_MODEL=gpt-5.6-luna
 ```
 
 FAQ generation sends the selected page's title, H1 and up to 8,000 characters
-of visible page text to the OpenAI API. Review all generated content before
+of visible text to the OpenAI API. Review every generated answer before
 publishing it.
 
 ## Output
 
-Each run creates the following files in the selected `--out-dir`:
+Audit and FAQ runs create:
 
-- `report.json` for machine-readable data
-- `report.md` for easy text review and copying
-- `report.html` for visual review in a browser
+- `report.json` for machine-readable results
+- `report.md` for text review
+- `report.html` for visual browser review
 
-When FAQs are generated, all three reports include:
+Site-audit reports include:
 
-- Three to five question-and-answer suggestions
-- Visible FAQ HTML
-- Matching `FAQPage` JSON-LD
-- Copy buttons in the HTML report
+- analyzed page count
+- orphan-page count and URLs
+- FAQ-gap count
+- per-page FAQ status
+- incoming and outgoing internal-link counts
 
-Generated reports are excluded from Git because they are run-specific output.
+FAQ reports also include:
 
-## Options
+- three to five question-and-answer suggestions
+- visible FAQ HTML
+- matching `FAQPage` JSON-LD
 
-```bash
-./.venv/bin/python main.py --help
-```
-
-Use `--min-similarity` to change the minimum TF-IDF similarity score required
-for a link suggestion. Use `--out-dir` to keep reports from different runs in
-separate directories.
+Generated reports are excluded from Git because they are run-specific.
 
 ## Current limitations
 
-- Full public-site analysis requires a readable XML sitemap.
-- Pages are currently fetched sequentially during a full audit.
-- Results are not cached between runs.
-- TF-IDF recognizes shared words, but not synonyms or broader meaning.
-- Anchor suggestions are deliberately conservative.
-- FAQ generation is currently limited to one explicitly selected page per run.
-- The tool excludes the exact `/privacy/` and `/writing/` paths from content
-  comparison while still including their links in the site graph.
+- Public audits require a readable `/sitemap.xml`.
+- Pages are fetched sequentially.
+- Orphan detection is limited to the pages included in the crawl.
+- FAQ detection recognizes explicit visible FAQ patterns and valid FAQPage
+  JSON-LD; unusual custom implementations may need manual review.
+- FAQ generation handles one explicitly selected page per run.

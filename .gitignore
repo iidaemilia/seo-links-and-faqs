@@ -4,3 +4,4 @@ __pycache__/
 *.py[cod]
 output/
 .seo-linker-cache/
+*.code-workspace
