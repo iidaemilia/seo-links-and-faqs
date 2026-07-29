@@ -1,7 +1,7 @@
 # SEO Linker
 
 A Python command-line tool for auditing orphan pages and FAQ coverage, and for
-generating page-specific FAQ suggestions.
+generating page-specific FAQ suggestions. [Read my article about the FAQ generator part of the tool.](https://iidalehtonen.com/writing/do-faqs-matter-for-ai-search/)
 
 The tool can analyze a public website through its XML sitemap, inspect a local
 directory of HTML files or fetch one public page for FAQ generation. It never
